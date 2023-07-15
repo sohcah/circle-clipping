@@ -31,7 +31,7 @@ const data: [number, number, number][] = [
 
 const r = seedrandom("hi");
 //
-for (let i = 0; i < 100; i++) {
+for (let i = 0; i < 10000; i++) {
     data.push([data[0][0] + r() * 0.05, data[0][1] + r() * 0.05, 0.03]);
 }
 console.log(r());
@@ -41,38 +41,33 @@ interface Coordinates {
     longitude: number;
 }
 
-interface Circle {
-    center: Coordinates;
-    radius: number;
-}
-
 interface IntersectionResult {
     points: Coordinates[];
-    midpoint: Coordinates | null;
+    midpoint: Coordinates;
 }
 
-function calculateIntersection(circle1: Circle, circle2: Circle): IntersectionResult {
+function calculateIntersection(circle1: CircleArray, circle2: CircleArray): IntersectionResult | null {
     const earthRadius = 6371; // Radius of the Earth in kilometers
 
     // Convert the coordinates to radians
-    const lat1 = toRadians(circle1.center.latitude);
-    const lon1 = toRadians(circle1.center.longitude);
-    const lat2 = toRadians(circle2.center.latitude);
-    const lon2 = toRadians(circle2.center.longitude);
+    const lat1 = toRadians(circle1[1]);
+    const lon1 = toRadians(circle1[0]);
+    const lat2 = toRadians(circle2[1]);
+    const lon2 = toRadians(circle2[0]);
 
     // Calculate the distance between the circle centers
     const distance = haversine(lat1, lon1, lat2, lon2, earthRadius);
 
     // Check if the circles intersect
-    if (distance > circle1.radius + circle2.radius || distance < Math.abs(circle1.radius - circle2.radius)) {
+    if (distance > circle1[2] + circle2[2] || distance < Math.abs(circle1[2] - circle2[2])) {
         // No intersection points or circles are contained within each other
-        return {points: [], midpoint: null};
+        return null;
     }
 
     // Calculate the intersection angles
     const intersectionAngle = Math.acos(
-        (circle1.radius * circle1.radius + distance * distance - circle2.radius * circle2.radius) /
-        (2 * circle1.radius * distance)
+        (circle1[2] * circle1[2] + distance * distance - circle2[2] * circle2[2]) /
+        (2 * circle1[2] * distance)
     );
 
     // Calculate the coordinates of the intersection points
@@ -80,20 +75,20 @@ function calculateIntersection(circle1: Circle, circle2: Circle): IntersectionRe
     const angle2 = angle1 + intersectionAngle;
     const angle3 = angle1 - intersectionAngle;
 
-    const p1lat = toDegrees(Math.asin(Math.sin(lat1) * Math.cos(circle1.radius / earthRadius) +
-        Math.cos(lat1) * Math.sin(circle1.radius / earthRadius) * Math.cos(angle2)));
+    const p1lat = toDegrees(Math.asin(Math.sin(lat1) * Math.cos(circle1[2] / earthRadius) +
+        Math.cos(lat1) * Math.sin(circle1[2] / earthRadius) * Math.cos(angle2)));
     const point1 = {
         latitude: p1lat,
-        longitude: toDegrees(lon1 + Math.atan2(Math.sin(angle2) * Math.sin(circle1.radius / earthRadius) * Math.cos(lat1),
-            Math.cos(circle1.radius / earthRadius) - Math.sin(lat1) * Math.sin(toRadians(p1lat))))
+        longitude: toDegrees(lon1 + Math.atan2(Math.sin(angle2) * Math.sin(circle1[2] / earthRadius) * Math.cos(lat1),
+            Math.cos(circle1[2] / earthRadius) - Math.sin(lat1) * Math.sin(toRadians(p1lat))))
     };
 
-    const p2lat = toDegrees(Math.asin(Math.sin(lat1) * Math.cos(circle1.radius / earthRadius) +
-        Math.cos(lat1) * Math.sin(circle1.radius / earthRadius) * Math.cos(angle3)));
+    const p2lat = toDegrees(Math.asin(Math.sin(lat1) * Math.cos(circle1[2] / earthRadius) +
+        Math.cos(lat1) * Math.sin(circle1[2] / earthRadius) * Math.cos(angle3)));
     const point2 = {
         latitude: p2lat,
-        longitude: toDegrees(lon1 + Math.atan2(Math.sin(angle3) * Math.sin(circle1.radius / earthRadius) * Math.cos(lat1),
-            Math.cos(circle1.radius / earthRadius) - Math.sin(lat1) * Math.sin(toRadians(p2lat))))
+        longitude: toDegrees(lon1 + Math.atan2(Math.sin(angle3) * Math.sin(circle1[2] / earthRadius) * Math.cos(lat1),
+            Math.cos(circle1[2] / earthRadius) - Math.sin(lat1) * Math.sin(toRadians(p2lat))))
     };
 
     // Calculate the midpoint between the intersection points
@@ -126,12 +121,6 @@ function haversine(lat1: number, lon1: number, lat2: number, lon2: number, radiu
     return radius * c;
 }
 
-function calculateMidpoint(point1: Coordinates, point2: Coordinates): Coordinates {
-    const latitude = (point1.latitude + point2.latitude) / 2;
-    const longitude = (point1.longitude + point2.longitude) / 2;
-    return {latitude, longitude};
-}
-
 const triangleFeatures: Feature[] = [];
 
 // const intPoints = findIntersectionPoints(data);
@@ -140,9 +129,9 @@ const triangleFeatures: Feature[] = [];
 // }
 
 const {points: intersectionOfFirstTwo, midpoint} = calculateIntersection(
-    {center: {latitude: data[0][1], longitude: data[0][0]}, radius: data[0][2]},
-    {center: {latitude: data[1][1], longitude: data[1][0]}, radius: data[1][2]}
-);
+    data[0],
+    data[1],
+)!;
 console.log(intersectionOfFirstTwo, midpoint, data[0], data[1]);
 triangleFeatures.push(point([intersectionOfFirstTwo[0].longitude, intersectionOfFirstTwo[0].latitude]));
 triangleFeatures.push(point([intersectionOfFirstTwo[1]?.longitude, intersectionOfFirstTwo[1]?.latitude]));
@@ -150,13 +139,44 @@ triangleFeatures.push(point([intersectionOfFirstTwo[1]?.longitude, intersectionO
 // triangleFeatures.push(point([data[0][0], data[0][1]]));
 // triangleFeatures.push(point([data[1][0], data[1][1]]));
 
-const mid = calculateMidpoint(
-    intersectionOfFirstTwo[0]!,
-    intersectionOfFirstTwo[1]!
-);
 triangleFeatures.push(point(
-    [mid.longitude, mid.latitude]
+    [midpoint.longitude, midpoint.latitude]
 ))
+
+
+// Benchmark the performance of calculating the intersection points
+const start = performance.now();
+
+const kdbush = new KDBush(data.length);
+
+for (const circle of data) {
+    kdbush.add(circle[0], circle[1]);
+}
+
+kdbush.finish();
+
+const maximumRadius = data.reduce((max, c) => c[2] > max ? c[2] : max, 0);
+
+for (let i = 0; i < data.length; i++) {
+    const circle = data[i];
+    const potentialIntersections = geokdbush.around(kdbush, circle[0], circle[1], Infinity, maximumRadius + circle[2], c => c !== i);
+    for (const potentialIntersection of potentialIntersections) {
+        const otherCircle = data[potentialIntersection];
+        const intersection = calculateIntersection(
+            circle,
+            otherCircle,
+        );
+
+        if (intersection) {
+            for (const pt of intersection.points) {
+                triangleFeatures.push(point([pt.longitude, pt.latitude]));
+            }
+        }
+    }
+}
+
+const end = performance.now();
+console.log(`Time taken: ${end - start}ms`);
 
 
 type CircleArray = [number, number, number];
@@ -174,68 +194,6 @@ function getLeftNeighbor(pointIndex: number) {
 
 function getRightNeighbor(pointIndex: number) {
     return ((pointIndex + 1) % pointsPerCircle) + getCircleIndex(pointIndex) * pointsPerCircle;
-}
-
-function group(circles: CircleArray[]): CircleArray[][] {
-
-    const maximumRadius = circles.reduce((max, c) => c[2] > max ? c[2] : max, 0);
-
-    const kdbush = new KDBush(circles.length);
-
-    for (const circle of circles) {
-        kdbush.add(circle[0], circle[1]);
-    }
-
-    kdbush.finish();
-
-    const circleGroups = new Array<number>(circles.length);
-
-    for (let i = 0; i < circles.length; i++) {
-        const potentialIntersections = geokdbush.around(
-            kdbush,
-            circles[i][0],
-            circles[i][1],
-            Infinity,
-            circles[i][2] + maximumRadius,
-            (c) => c !== i
-        );
-
-        const intersections = potentialIntersections.filter((j) => {
-            const circle = circles[j];
-            const dist = distance([circles[i][0], circles[i][1]], [circle[0], circle[1]]);
-            return dist < circles[i][2] + circle[2];
-        });
-
-        for (const intersection of intersections) {
-            if (circleGroups[intersection] === undefined) {
-                circleGroups[intersection] = i;
-            } else {
-                const groupToUpdate = circleGroups[intersection];
-                for (let j = 0; j < circles.length; j++) {
-                    if (circleGroups[j] === groupToUpdate) {
-                        circleGroups[j] = i;
-                    }
-                }
-            }
-        }
-
-        if (circleGroups[i] === undefined) {
-            circleGroups[i] = i;
-        }
-    }
-
-    const groups = new Map<number, CircleArray[]>();
-
-    for (let i = 0; i < circles.length; i++) {
-        const group = groups.get(circleGroups[i]);
-        if (group === undefined) {
-            groups.set(circleGroups[i], [circles[i]]);
-        } else {
-            group.push(circles[i]);
-        }
-    }
-
-    return Array.from(groups.values());
 }
 
 // Union a set of circles into a set of polygons
@@ -627,12 +585,12 @@ For each loose end point, find the closest loose end of a different circle in th
     //     }
     //     const circleEntry = queue.pop()!;
     //     if (currentPolygon) {
-    //         currentPolygon = union(currentPolygon, circle(circleEntry.center, circleEntry.radius));
+    //         currentPolygon = union(currentPolygon, circle(circleEntry.center, circleEntry[2]));
     //     } else {
-    //         currentPolygon = circle(circleEntry.center, circleEntry.radius);
+    //         currentPolygon = circle(circleEntry.center, circleEntry[2]);
     //     }
     //     const intersections = [...remainingCirclesSet].filter((c) => {
-    //         return distance(circleEntry.center, c.center) < circleEntry.radius + c.radius;
+    //         return distance(circleEntry.center, c.center) < circleEntry[2] + c[2];
     //     });
     //     intersections.forEach((c) => remainingCirclesSet.delete(c));
     //     queue.push(...intersections);
