@@ -4,11 +4,14 @@ import {
     circle,
     destination,
     Feature, point,
-
+    bearing, lineString, distance, polygon,
 } from '@turf/turf';
 import seedrandom from 'seed-random';
 import KDBush from "kdbush";
 import * as geokdbush from "geokdbush-tk";
+import Polygon from "polygon-clipping"
+
+const {xor, union} = Polygon;
 
 const pointsPerCircle = 32;
 
@@ -21,7 +24,8 @@ const data: [number, number, number][] = [
 
 const r = seedrandom("hi");
 //
-for (let i = 0; i < 0; i++) {
+//
+for (let i = 0; i < 1000; i++) {
     data.push([data[0][0] + r() * 0.05, data[0][1] + r() * 0.05, 0.03]);
 }
 console.log(r());
@@ -32,7 +36,7 @@ interface IntersectionResult {
 }
 
 type CircleArray = [number, number, number];
-const earthRadius = 6371; // Radius of the Earth in kilometers
+const earthRadius = 6371.0088; // Radius of the Earth in kilometers
 
 function calculateIntersection(circle1: CircleArray, circle2: CircleArray): IntersectionResult | null {
 
@@ -107,7 +111,7 @@ function haversine(lat1: number, lon1: number, lat2: number, lon2: number, radiu
 function generateFlattened(circles: CircleArray[]): Feature[] {
     const features: Feature[] = [];
 
-// Benchmark the performance of calculating the intersection points
+    // Benchmark the performance of calculating the intersection point
     const start = performance.now();
 
     const kdbush = new KDBush(circles.length);
@@ -134,9 +138,9 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
 
             if (intersection) {
                 for (const pt of intersection.points) {
-                    features.push(point(pt, {
-                        radius: 10,
-                    }));
+                    // features.push(point(pt, {
+                    //     radius: 10,
+                    // }));
                     intersectionPointsByCircle[i].push(pt);
                     intersectionPointsByCircle[potentialIntersection].push(pt);
                 }
@@ -155,22 +159,35 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
             continue;
         }
 
-        const sortedIntersectionPoints = intersectionPoints.sort((a, b) => {
-            const angleA = Math.atan2(a[1] - circle[1], a[0] - circle[0]);
-            const angleB = Math.atan2(b[1] - circle[1], b[0] - circle[0]);
-            return angleA - angleB;
-        });
+        const angles = intersectionPoints.map(pt => bearing(pt, circle));
 
-        let prevAngle = Math.atan2(sortedIntersectionPoints[sortedIntersectionPoints.length - 1][1] - circle[1], sortedIntersectionPoints[sortedIntersectionPoints.length - 1][0] - circle[0]);
+        angles.sort((a, b) => a - b);
 
-        for (const pt of sortedIntersectionPoints) {
-            const angle = Math.atan2(pt[1] - circle[1], pt[0] - circle[0]);
-            circleArcs[i].push([(prevAngle + 2 * Math.PI) % (2 * Math.PI), (angle + 2 * Math.PI) % (2 * Math.PI)]);
-            prevAngle = angle;
+        for (let j = 0; j < angles.length; j++) {
+            const bearing1 = angles[j]
+            const bearing2 = angles[(j + 1) % angles.length];
+
+            let startAngle = bearing1 * Math.PI / 180;
+            let endAngle = bearing2 * Math.PI / 180;
+
+            if (startAngle < 0) {
+                startAngle += 2 * Math.PI;
+            }
+
+            if (endAngle < 0) {
+                endAngle += 2 * Math.PI;
+            }
+
+            if (endAngle < startAngle) {
+                endAngle += 2 * Math.PI;
+            }
+
+            circleArcs[i].push([startAngle, endAngle]);
+
         }
     }
 
-    console.log(circleArcs);
+    const arcSegments: ([number, number][] | null)[] = [];
 
     // Create line segments for each circle arc with 10 points per arc
     for (let i = 0; i < circles.length; i++) {
@@ -188,27 +205,131 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
             const points: [number, number][] = [];
             for (let p = 0; p <= noPoints; p++) {
                 const angle = startAngle + p * deltaAngle;
-                const pt = destination([circle[0], circle[1]], circle[2], angle * 180 / Math.PI, {units: "kilometers"});
+                const pt = destination([circle[0], circle[1]], circle[2], angle * 180 / Math.PI + 180, {units: "kilometers"});
                 points.push(pt.geometry.coordinates);
             }
 
-            features.push({
-                type: "Feature",
-                properties: {
-                    color: `#${Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, "0")}`
-                },
-                geometry: {
-                    type: "LineString",
-                    coordinates: points
-                }
-            });
+            arcSegments.push(points);
         }
     }
 
+    const arcSegmentsKDBush = new KDBush(arcSegments.length);
+
+    for (let i = 0; i < arcSegments.length; i++) {
+        const segment = arcSegments[i]!;
+        const middleCoordinate = segment[Math.floor(segment.length / 2)];
+        arcSegmentsKDBush.add(middleCoordinate[0], middleCoordinate[1]);
+    }
+
+    arcSegmentsKDBush.finish();
+
+    for (const circle of circles) {
+        const overlappingArcs = geokdbush.around(arcSegmentsKDBush, circle[0], circle[1], Infinity, circle[2] - 0.0001);
+        for (const overlappingArc of overlappingArcs) {
+            arcSegments[overlappingArc] = null;
+        }
+    }
+
+    // for (const segment of arcSegments) {
+    //     if(!segment) continue;
+    //     features.push(lineString(segment, {
+    //         color: `#${Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, "0")}`,
+    //     }));
+    // }
+
+
+    const filteredSegments = arcSegments.filter(s => s !== null);
+
+    // Final step: Stitch together groups of line segments that are connected to make polygons
+    const polygons: [number, number][][] = [];
+
+    for (let i = 0; i < filteredSegments.length; i++) {
+        const segment = filteredSegments[i];
+        if (!segment) continue;
+        const start = segment[0];
+        const end = segment[segment.length - 1];
+
+        let found = false;
+        for (let j = 0; j < polygons.length; j++) {
+            const polygon = polygons[j];
+
+            const startDistance = distance(polygon[polygon.length - 1], start, {units: "kilometers"});
+            const endDistance = distance(polygon[0], end, {units: "kilometers"});
+
+            if (startDistance < 0.0001) {
+                polygon.push(...segment);
+                found = true;
+                break;
+            } else if (endDistance < 0.0001) {
+                polygon.unshift(...segment);
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            polygons.push(segment);
+        }
+    }
+
+    let changed = true;
+    while (changed) {
+        changed = false;
+
+        // Attempt to merge polygons
+        for (let i = 0; i < polygons.length; i++) {
+            const polygon1 = polygons[i];
+
+            for (let j = i + 1; j < polygons.length; j++) {
+                const polygon2 = polygons[j];
+
+                const startDistance = distance(polygon1[polygon1.length - 1], polygon2[0], {units: "kilometers"});
+                const endDistance = distance(polygon1[0], polygon2[polygon2.length - 1], {units: "kilometers"});
+
+                if (startDistance < 0.0001) {
+                    polygon1.push(...polygon2);
+                    polygons.splice(j, 1);
+                    changed = true;
+                    break;
+                } else if (endDistance < 0.0001) {
+                    polygon1.unshift(...polygon2);
+                    polygons.splice(j, 1);
+                    changed = true;
+                    break;
+                }
+            }
+            if (changed) break;
+        }
+    }
+
+    // let i = 0;
+    for (const poly of polygons) {
+        // const coords = [
+        //     ...poly,
+        //     poly[0],
+        // ];
+        // console.log(coords);
+        features.push(polygon([[...poly, poly[0]]], {
+            color: `#${Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, "0")}`,
+        }));
+        // features.push(lineString(poly, {
+        //     color: `#${Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, "0")}`,
+        //     label: `${i}`
+        // }));
+        // i++;
+    }
+    // const params = features.map(i => [(i.geometry as any).coordinates]);
+    // const polys = xor(params[0], ...params.slice(1));
+    //
     const end = performance.now();
     console.log(`Time taken: ${end - start}ms`);
 
     return features;
+    //
+    //
+    // return polys.map((poly) => {
+    //     return polygon(poly);
+    // });
 }
 
 
@@ -273,16 +394,43 @@ function App() {
                     >
                         <Source type="geojson" data={{
                             type: "FeatureCollection",
-                            features: data.map((d) => circle([d[0], d[1]], d[2], {
-                                steps: pointsPerCircle,
-                                units: "kilometers",
+                            features: [
+                                [-122.39886460489092, 37.79642967019507, "97s", 1],
+                                [-122.39886460493965, 37.79642966916102, "97e", 2],
+                                [-122.39856795153895, 37.796908184045165, "53s", 3],
+                                [-122.39856795280795, 37.796908183694256, "53e", 4]
+                            ].map(d => point([d[0], d[1]], {
+                                label: d[2],
+                                offset: [0, d[3] * 2]
                             }))
                         }}>
-                            <Layer type="fill" paint={{
-                                "fill-color": "#007cbf",
-                                "fill-opacity": 0.1
+                            <Layer type="circle" paint={{
+                                "circle-radius": 10,
+                                "circle-color": "#007cbf"
                             }}/>
+                            <Layer type="symbol"
+                                   layout={{
+                                       "text-field": ["get", "label"],
+                                       "text-size": 12,
+                                       "text-offset": ["get", "offset"]
+                                   }}
+                                   paint={{
+                                       "text-color": "#000000"
+                                   }}
+                            />
                         </Source>
+                        {/*<Source type="geojson" data={{*/}
+                        {/*    type: "FeatureCollection",*/}
+                        {/*    features: data.map((d) => circle([d[0], d[1]], d[2], {*/}
+                        {/*        steps: pointsPerCircle,*/}
+                        {/*        units: "kilometers",*/}
+                        {/*    }))*/}
+                        {/*}}>*/}
+                        {/*    <Layer type="fill" paint={{*/}
+                        {/*        "fill-color": "#007cbf",*/}
+                        {/*        "fill-opacity": 0.1*/}
+                        {/*    }}/>*/}
+                        {/*</Source>*/}
                         {/*<Source type="geojson" data={{*/}
                         {/*    type: "FeatureCollection",*/}
                         {/*    features: flatten(data)*/}
@@ -322,6 +470,21 @@ function App() {
                                    paint={{
                                        "line-color": ["get", "color"],
                                        "line-width": 2
+                                   }}/>
+                            <Layer type="fill"
+                                   paint={{
+                                       "fill-color": ["get", "color"],
+                                       "fill-opacity": 0.1
+                                   }}/>
+                            <Layer type="symbol"
+                                   layout={{
+                                       "text-field": ["get", "label"],
+                                       "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+                                       "text-offset": [0, 0.6],
+                                       "text-anchor": "top"
+                                   }}
+                                   paint={{
+                                       "text-color": "#000",
                                    }}/>
                             <Layer type="circle"
                                    paint={{
