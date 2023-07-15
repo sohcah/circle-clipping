@@ -12,10 +12,12 @@
   "dependencies": {
     "@turf/turf": "^6.5.0",
     "@types/d3-delaunay": "^6.0.1",
+    "cheap-ruler": "^3.0.2",
     "d3-delaunay": "^6.0.4",
     "delaunator": "^5.0.0",
     "geokdbush-tk": "^2.0.3",
     "kdbush": "^4.0.2",
+    "mapbox-gl": "^2.15.0",
     "polygon-clipping": "^0.15.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
