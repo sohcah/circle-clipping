@@ -36,77 +36,97 @@ for (let i = 0; i < 100; i++) {
 }
 console.log(r());
 
-interface Point {
+interface Coordinates {
     latitude: number;
     longitude: number;
 }
 
 interface Circle {
-    center: Point;
+    center: Coordinates;
     radius: number;
 }
 
-function calculateDistance(point1: Point, point2: Point): number {
-    const R = 6371; // Earth's radius in kilometers
-    const phi1 = (point1.latitude * Math.PI) / 180;
-    const phi2 = (point2.latitude * Math.PI) / 180;
-    const deltaPhi = ((point2.latitude - point1.latitude) * Math.PI) / 180;
-    const deltaLambda = ((point2.longitude - point1.longitude) * Math.PI) / 180;
-
-    const a =
-        Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
-        Math.cos(phi1) *
-        Math.cos(phi2) *
-        Math.sin(deltaLambda / 2) *
-        Math.sin(deltaLambda / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distance = R * c;
-
-    return distance;
+interface IntersectionResult {
+    points: Coordinates[];
+    midpoint: Coordinates | null;
 }
 
+function calculateIntersection(circle1: Circle, circle2: Circle): IntersectionResult {
+    const earthRadius = 6371; // Radius of the Earth in kilometers
 
-function calculateIntersectionPoints(circle1, circle2) {
-    const R = 100; // Earth's radius in kilometers
+    // Convert the coordinates to radians
+    const lat1 = toRadians(circle1.center.latitude);
+    const lon1 = toRadians(circle1.center.longitude);
+    const lat2 = toRadians(circle2.center.latitude);
+    const lon2 = toRadians(circle2.center.longitude);
 
-    const d = calculateDistance(circle1.center, circle2.center);
+    // Calculate the distance between the circle centers
+    const distance = haversine(lat1, lon1, lat2, lon2, earthRadius);
 
     // Check if the circles intersect
-    if (d > circle1.radius + circle2.radius || d < Math.abs(circle1.radius - circle2.radius)) {
-        // Circles do not intersect
-        return [null, null];
+    if (distance > circle1.radius + circle2.radius || distance < Math.abs(circle1.radius - circle2.radius)) {
+        // No intersection points or circles are contained within each other
+        return {points: [], midpoint: null};
     }
 
-    const a = (circle1.radius * circle1.radius - circle2.radius * circle2.radius + d * d) / (2 * d);
-    const h = Math.sqrt(circle1.radius * circle1.radius - a * a) / R;
-
-    const x2 = circle1.center.longitude + (a * (circle2.center.longitude - circle1.center.longitude)) / d;
-    const y2 = circle1.center.latitude + (a * (circle2.center.latitude - circle1.center.latitude)) / d;
-
-    const lambda1 = Math.atan2(
-        y2 - circle1.center.latitude,
-        x2 - circle1.center.longitude
-    );
-    const lambda2 = Math.atan2(
-        y2 - circle2.center.latitude,
-        x2 - circle2.center.longitude
+    // Calculate the intersection angles
+    const intersectionAngle = Math.acos(
+        (circle1.radius * circle1.radius + distance * distance - circle2.radius * circle2.radius) /
+        (2 * circle1.radius * distance)
     );
 
-    const intersectionPoint1 = {
-        latitude: (circle1.center.latitude + circle2.center.latitude) / 2 + h * Math.cos((lambda1 + lambda2) / 2),
-        longitude: (circle1.center.longitude + circle2.center.longitude) / 2 + h * Math.sin((lambda1 + lambda2) / 2),
+    // Calculate the coordinates of the intersection points
+    const angle1 = Math.atan2(lon2 - lon1, Math.log(Math.tan(lat2 / 2 + Math.PI / 4) / Math.tan(lat1 / 2 + Math.PI / 4)));
+    const angle2 = angle1 + intersectionAngle;
+    const angle3 = angle1 - intersectionAngle;
+
+    const p1lat = toDegrees(Math.asin(Math.sin(lat1) * Math.cos(circle1.radius / earthRadius) +
+        Math.cos(lat1) * Math.sin(circle1.radius / earthRadius) * Math.cos(angle2)));
+    const point1 = {
+        latitude: p1lat,
+        longitude: toDegrees(lon1 + Math.atan2(Math.sin(angle2) * Math.sin(circle1.radius / earthRadius) * Math.cos(lat1),
+            Math.cos(circle1.radius / earthRadius) - Math.sin(lat1) * Math.sin(toRadians(p1lat))))
     };
 
-    const intersectionPoint2 = {
-        latitude: (circle1.center.latitude + circle2.center.latitude) / 2 - h * Math.cos((lambda1 + lambda2) / 2),
-        longitude: (circle1.center.longitude + circle2.center.longitude) / 2 - h * Math.sin((lambda1 + lambda2) / 2),
+    const p2lat = toDegrees(Math.asin(Math.sin(lat1) * Math.cos(circle1.radius / earthRadius) +
+        Math.cos(lat1) * Math.sin(circle1.radius / earthRadius) * Math.cos(angle3)));
+    const point2 = {
+        latitude: p2lat,
+        longitude: toDegrees(lon1 + Math.atan2(Math.sin(angle3) * Math.sin(circle1.radius / earthRadius) * Math.cos(lat1),
+            Math.cos(circle1.radius / earthRadius) - Math.sin(lat1) * Math.sin(toRadians(p2lat))))
     };
 
-    return [intersectionPoint1, intersectionPoint2];
+    // Calculate the midpoint between the intersection points
+    const midpoint = {
+        latitude: (point1.latitude + point2.latitude) / 2,
+        longitude: (point1.longitude + point2.longitude) / 2,
+    };
+
+    return {points: [point1, point2], midpoint};
 }
 
+// Helper function to convert degrees to radians
+function toRadians(degrees: number): number {
+    return degrees * (Math.PI / 180);
+}
 
-function calculateMidpoint(point1: Point, point2: Point): Point {
+// Helper function to convert radians to degrees
+function toDegrees(radians: number): number {
+    return radians * (180 / Math.PI);
+}
+
+// Haversine formula to calculate the great-circle distance between two points
+function haversine(lat1: number, lon1: number, lat2: number, lon2: number, radius: number): number {
+    const dlat = lat2 - lat1;
+    const dlon = lon2 - lon1;
+    const a =
+        Math.sin(dlat / 2) * Math.sin(dlat / 2) +
+        Math.cos(lat1) * Math.cos(lat2) * Math.sin(dlon / 2) * Math.sin(dlon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return radius * c;
+}
+
+function calculateMidpoint(point1: Coordinates, point2: Coordinates): Coordinates {
     const latitude = (point1.latitude + point2.latitude) / 2;
     const longitude = (point1.longitude + point2.longitude) / 2;
     return {latitude, longitude};
@@ -119,19 +139,16 @@ const triangleFeatures: Feature[] = [];
 //     triangleFeatures.push(point([lon, lat]));
 // }
 
-const intersectionOfFirstTwo = calculateIntersectionPoints({
-    center: {latitude: data[0][1], longitude: data[0][0]},
-    radius: data[0][2],
-}, {
-    center: {latitude: data[1][1], longitude: data[1][0]},
-    radius: data[1][2],
-});
-console.log(intersectionOfFirstTwo, data[0], data[1]);
-triangleFeatures.push(point([intersectionOfFirstTwo[0]?.longitude, intersectionOfFirstTwo[0]?.latitude]));
+const {points: intersectionOfFirstTwo, midpoint} = calculateIntersection(
+    {center: {latitude: data[0][1], longitude: data[0][0]}, radius: data[0][2]},
+    {center: {latitude: data[1][1], longitude: data[1][0]}, radius: data[1][2]}
+);
+console.log(intersectionOfFirstTwo, midpoint, data[0], data[1]);
+triangleFeatures.push(point([intersectionOfFirstTwo[0].longitude, intersectionOfFirstTwo[0].latitude]));
 triangleFeatures.push(point([intersectionOfFirstTwo[1]?.longitude, intersectionOfFirstTwo[1]?.latitude]));
 
-triangleFeatures.push(point([data[0][0], data[0][1]]));
-triangleFeatures.push(point([data[1][0], data[1][1]]));
+// triangleFeatures.push(point([data[0][0], data[0][1]]));
+// triangleFeatures.push(point([data[1][0], data[1][1]]));
 
 const mid = calculateMidpoint(
     intersectionOfFirstTwo[0]!,
