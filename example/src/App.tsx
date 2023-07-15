@@ -36,135 +36,87 @@ for (let i = 0; i < 100; i++) {
 }
 console.log(r());
 
-function distanceBetweenCoordinates(lon1: number, lat1: number, lon2: number, lat2: number): number {
-    const earthRadiusKm = 6371;
-
-    const lon1Rad = toRadians(lon1);
-    const lat1Rad = toRadians(lat1);
-    const lon2Rad = toRadians(lon2);
-    const lat2Rad = toRadians(lat2);
-
-    const dLon = lon2Rad - lon1Rad;
-    const dLat = lat2Rad - lat1Rad;
-
-    const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(lat1Rad) * Math.cos(lat2Rad) * Math.sin(dLon / 2) ** 2;
-
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    return earthRadiusKm * c;
-}
-
-function findIntersectionPoints(circles: [longitude: number, latitude: number, radiusKm: number][]): [number, number][] {
-    const intersectionPoints: [number, number][] = [];
-
-    for (let i = 0; i < circles.length - 1; i++) {
-        const [lon1, lat1, r1] = circles[i];
-
-        for (let j = i + 1; j < circles.length; j++) {
-            const [lon2, lat2, r2] = circles[j];
-
-            const d = distanceBetweenCoordinates(lon1, lat1, lon2, lat2);
-
-            if (d <= r1 + r2 && d >= Math.abs(r1 - r2)) {
-                const intersection = findCircleIntersection(lon1, lat1, r1, lon2, lat2, r2);
-                intersectionPoints.push(...intersection);
-            }
-        }
-    }
-
-    return intersectionPoints;
-}
-
-function findCircleIntersection(
-    lon1: number,
-    lat1: number,
-    r1: number,
-    lon2: number,
-    lat2: number,
-    r2: number
-): [number, number][] {
-    const earthRadiusKm = 6371;
-
-    // Convert coordinates to radians
-    const lon1Rad = toRadians(lon1);
-    const lat1Rad = toRadians(lat1);
-    const lon2Rad = toRadians(lon2);
-    const lat2Rad = toRadians(lat2);
-
-    // Calculate central angle between the two points
-    const centralAngle = calculateCentralAngle(lat1Rad, lon1Rad, lat2Rad, lon2Rad);
-
-    // Check if circles do not intersect
-    if (centralAngle > r1 / earthRadiusKm + r2 / earthRadiusKm) {
-        return [];
-    }
-
-    // Calculate the angular distance from the center of each circle to the intersection points
-    const angularDistance1 = Math.acos((r1 * earthRadiusKm) / earthRadiusKm);
-    const angularDistance2 = Math.acos((r2 * earthRadiusKm) / earthRadiusKm);
-
-    // Calculate the bearing from the first point to the second point
-    const bearing = calculateBearing(lat1Rad, lon1Rad, lat2Rad, lon2Rad);
-
-    // Calculate the intersection points
-    const intersection1 = calculateDestinationPoint(lat1Rad, lon1Rad, bearing + angularDistance1, r1);
-    const intersection2 = calculateDestinationPoint(lat1Rad, lon1Rad, bearing - angularDistance1, r1);
-    const intersection3 = calculateDestinationPoint(lat2Rad, lon2Rad, bearing + Math.PI + angularDistance2, r2);
-    const intersection4 = calculateDestinationPoint(lat2Rad, lon2Rad, bearing + Math.PI - angularDistance2, r2);
-
-    return [intersection1, intersection2, intersection3, intersection4];
-}
-
-function calculateCentralAngle(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    return Math.acos(
-        Math.sin(lat1) * Math.sin(lat2) +
-        Math.cos(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1)
-    );
-}
-
-function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const y = Math.sin(lon2 - lon1) * Math.cos(lat2);
-    const x =
-        Math.cos(lat1) * Math.sin(lat2) -
-        Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
-
-    return Math.atan2(y, x);
-}
-
-function calculateDestinationPoint(lat: number, lon: number, bearing: number, distance: number): [number, number] {
-    const earthRadiusKm = 6371;
-
-    const lat2 = Math.asin(
-        Math.sin(lat) * Math.cos(distance / earthRadiusKm) +
-        Math.cos(lat) * Math.sin(distance / earthRadiusKm) * Math.cos(bearing)
-    );
-
-    const lon2 =
-        lon +
-        Math.atan2(
-            Math.sin(bearing) * Math.sin(distance / earthRadiusKm) * Math.cos(lat),
-            Math.cos(distance / earthRadiusKm) - Math.sin(lat) * Math.sin(lat2)
-        );
-
-    return [toDegrees(lon2), toDegrees(lat2)];
-}
-
-function toRadians(degrees: number): number {
-    return degrees * (Math.PI / 180);
-}
-
 function toDegrees(radians: number): number {
     return radians * (180 / Math.PI);
 }
 
+function intersection(p1: [number, number], r1_meter: number, p2: [number, number], r2_meter: number): [number, number][] {
+    const cos = Math.cos;
+    const sin = Math.sin;
+    const sqrt = Math.sqrt;
+
+    function toRadians(degrees: number): number {
+        return degrees * (Math.PI / 180);
+    }
+
+    const x_p1 = cos(toRadians(p1[1])) * cos(toRadians(p1[0]));
+    const y_p1 = sin(toRadians(p1[1])) * cos(toRadians(p1[0]));
+    const z_p1 = sin(toRadians(p1[0]));
+    const x1 = [x_p1, y_p1, z_p1];
+
+    const x_p2 = cos(toRadians(p2[1])) * cos(toRadians(p2[0]));
+    const y_p2 = sin(toRadians(p2[1])) * cos(toRadians(p2[0]));
+    const z_p2 = sin(toRadians(p2[0]));
+    const x2 = [x_p2, y_p2, z_p2];
+
+    const r1 = toRadians((r1_meter / 1852) / 60);
+    const r2 = toRadians((r2_meter / 1852) / 60);
+
+    const q = x1[0] * x2[0] + x1[1] * x2[1] + x1[2] * x2[2];
+
+    if (q ** 2 !== 1) {
+        const a = (cos(r1) - cos(r2) * q) / (1 - q ** 2);
+        const b = (cos(r2) - cos(r1) * q) / (1 - q ** 2);
+
+        const n = [
+            x1[1] * x2[2] - x1[2] * x2[1],
+            x1[2] * x2[0] - x1[0] * x2[2],
+            x1[0] * x2[1] - x1[1] * x2[0]
+        ];
+
+        const x0_1 = x1.map((f: number) => a * f);
+        const x0_2 = x2.map((f: number) => b * f);
+        const x0 = x0_1.map((f: number, i: number) => f + x0_2[i]);
+
+        if (x0[0] * x0[0] + x0[1] * x0[1] + x0[2] * x0[2] <= 1 && n[0] !== 0 && n[1] !== 0 && n[2] !== 0) {
+            const t = sqrt((1 - x0[0] * x0[0] - x0[1] * x0[1] - x0[2] * x0[2]) / (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]));
+            const t1 = t;
+            const t2 = -t;
+
+            const i1 = [x0[0] + t1 * n[0], x0[1] + t1 * n[1], x0[2] + t1 * n[2]];
+            const i2 = [x0[0] + t2 * n[0], x0[1] + t2 * n[1], x0[2] + t2 * n[2]];
+
+            const i1_lat = toDegrees(Math.asin(i1[2]));
+            const i1_lon = toDegrees(Math.atan2(i1[1], i1[0]));
+            const ip1 = [i1_lat, i1_lon] as [number, number];
+
+            const i2_lat = toDegrees(Math.asin(i2[2]));
+            const i2_lon = toDegrees(Math.atan2(i2[1], i2[0]));
+            const ip2 = [i2_lat, i2_lon] as [number, number];
+
+            return [ip1, ip2];
+        } else if (n[0] === 0 && n[1] === 0 && n[2] === 0) {
+            throw "The centers of the circles can be neither the same point nor antipodal points.";
+        } else {
+            throw "The circles do not intersect";
+        }
+    } else {
+        throw "The centers of the circles can be neither the same point nor antipodal points.";
+    }
+}
+
+
 const triangleFeatures: Feature[] = [];
 
-const intPoints = findIntersectionPoints(data);
-for (const [lon, lat] of intPoints) {
-    triangleFeatures.push(point([lon, lat]));
-}
+// const intPoints = findIntersectionPoints(data);
+// for (const [lon, lat] of intPoints) {
+//     triangleFeatures.push(point([lon, lat]));
+// }
+
+const intersectionOfFirstTwo = intersection([data[0][1], data[0][0]], data[0][2] * 1000, [data[1][1], data[1][0]], data[1][2] * 1000);
+console.log(intersectionOfFirstTwo, data[0], data[1]);
+triangleFeatures.push(point([intersectionOfFirstTwo[0][1], intersectionOfFirstTwo[0][0]]));
+triangleFeatures.push(point([intersectionOfFirstTwo[1][1], intersectionOfFirstTwo[1][0]]));
 
 
 type Circle = [number, number, number];
