@@ -37,8 +37,8 @@ for (let i = 0; i < 100; i++) {
 console.log(r());
 
 interface Point {
-    lat: number;
-    lng: number;
+    latitude: number;
+    longitude: number;
 }
 
 interface Circle {
@@ -46,76 +46,70 @@ interface Circle {
     radius: number;
 }
 
-function calculateIntersectionPoints(circle1: Circle, circle2: Circle): Point[] {
-    // Convert latitude and longitude to radians
-    const lat1 = toRadians(circle1.center.lat);
-    const lng1 = toRadians(circle1.center.lng);
-    const lat2 = toRadians(circle2.center.lat);
-    const lng2 = toRadians(circle2.center.lng);
+function calculateDistance(point1: Point, point2: Point): number {
+    const R = 6371; // Earth's radius in kilometers
+    const phi1 = (point1.latitude * Math.PI) / 180;
+    const phi2 = (point2.latitude * Math.PI) / 180;
+    const deltaPhi = ((point2.latitude - point1.latitude) * Math.PI) / 180;
+    const deltaLambda = ((point2.longitude - point1.longitude) * Math.PI) / 180;
 
-    // Calculate angular distance between the centers of the circles
-    const centralAngle = getCentralAngle(lat1, lng1, lat2, lng2);
+    const a =
+        Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+        Math.cos(phi1) *
+        Math.cos(phi2) *
+        Math.sin(deltaLambda / 2) *
+        Math.sin(deltaLambda / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distance = R * c;
 
-    // Check if the circles are disjoint or identical
-    if (centralAngle > circle1.radius + circle2.radius || centralAngle < Math.abs(circle1.radius - circle2.radius)) {
-        // No intersection points
-        return [];
+    return distance;
+}
+
+
+function calculateIntersectionPoints(circle1, circle2) {
+    const R = 100; // Earth's radius in kilometers
+
+    const d = calculateDistance(circle1.center, circle2.center);
+
+    // Check if the circles intersect
+    if (d > circle1.radius + circle2.radius || d < Math.abs(circle1.radius - circle2.radius)) {
+        // Circles do not intersect
+        return [null, null];
     }
 
-    // Calculate the azimuth angle from circle1 to circle2
-    const azimuth12 = Math.atan2(
-        Math.sin(lng2 - lng1) * Math.cos(lat2),
-        Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lng2 - lng1)
+    const a = (circle1.radius * circle1.radius - circle2.radius * circle2.radius + d * d) / (2 * d);
+    const h = Math.sqrt(circle1.radius * circle1.radius - a * a) / R;
+
+    const x2 = circle1.center.longitude + (a * (circle2.center.longitude - circle1.center.longitude)) / d;
+    const y2 = circle1.center.latitude + (a * (circle2.center.latitude - circle1.center.latitude)) / d;
+
+    const lambda1 = Math.atan2(
+        y2 - circle1.center.latitude,
+        x2 - circle1.center.longitude
+    );
+    const lambda2 = Math.atan2(
+        y2 - circle2.center.latitude,
+        x2 - circle2.center.longitude
     );
 
-    // Calculate the azimuth angle from circle2 to circle1
-    const azimuth21 = Math.atan2(
-        Math.sin(lng1 - lng2) * Math.cos(lat1),
-        Math.cos(lat2) * Math.sin(lat1) - Math.sin(lat2) * Math.cos(lat1) * Math.cos(lng1 - lng2)
-    );
-
-    // Calculate the angular distance from the center of circle1 to the intersection points
-    const angularDistanceFromCenter1 = Math.acos(
-        (Math.cos(circle2.radius) - Math.cos(circle1.radius) * Math.cos(centralAngle - azimuth21)) /
-        (Math.sin(circle1.radius) * Math.sin(centralAngle - azimuth21))
-    );
-
-    // Calculate the angular distance from the center of circle2 to the intersection points
-    const angularDistanceFromCenter2 = Math.acos(
-        (Math.cos(circle1.radius) - Math.cos(circle2.radius) * Math.cos(centralAngle - azimuth12)) /
-        (Math.sin(circle2.radius) * Math.sin(centralAngle - azimuth12))
-    );
-
-    // Calculate the coordinates of the intersection points
-    const intersectionPoint1: Point = {
-        lat: toDegrees(lat1 + Math.atan2(Math.cos(circle1.radius) * Math.sin(angularDistanceFromCenter1), Math.sin(circle1.radius) * Math.cos(angularDistanceFromCenter1) * Math.cos(azimuth12))),
-        lng: toDegrees(lng1 + Math.atan2(Math.sin(azimuth12) * Math.sin(angularDistanceFromCenter1), Math.cos(angularDistanceFromCenter1) - Math.sin(lat1) * Math.sin(lat1)))
+    const intersectionPoint1 = {
+        latitude: (circle1.center.latitude + circle2.center.latitude) / 2 + h * Math.cos((lambda1 + lambda2) / 2),
+        longitude: (circle1.center.longitude + circle2.center.longitude) / 2 + h * Math.sin((lambda1 + lambda2) / 2),
     };
 
-    const intersectionPoint2: Point = {
-        lat: toDegrees(lat2 + Math.atan2(Math.cos(circle2.radius) * Math.sin(angularDistanceFromCenter2), Math.sin(circle2.radius) * Math.cos(angularDistanceFromCenter2) * Math.cos(azimuth21))),
-        lng: toDegrees(lng2 + Math.atan2(Math.sin(azimuth21) * Math.sin(angularDistanceFromCenter2), Math.cos(angularDistanceFromCenter2) - Math.sin(lat2) * Math.sin(lat2)))
+    const intersectionPoint2 = {
+        latitude: (circle1.center.latitude + circle2.center.latitude) / 2 - h * Math.cos((lambda1 + lambda2) / 2),
+        longitude: (circle1.center.longitude + circle2.center.longitude) / 2 - h * Math.sin((lambda1 + lambda2) / 2),
     };
 
     return [intersectionPoint1, intersectionPoint2];
 }
 
-function toRadians(degrees: number): number {
-    return (degrees * Math.PI) / 180;
-}
 
-function toDegrees(radians: number): number {
-    return (radians * 180) / Math.PI;
-}
-
-function getCentralAngle(lat1: number, lng1: number, lat2: number, lng2: number): number {
-    const deltaLng = Math.abs(lng2 - lng1);
-    const numerator = Math.sqrt(
-        Math.pow(Math.cos(lat2) * Math.sin(deltaLng), 2) +
-        Math.pow(Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng), 2)
-    );
-    const denominator = Math.sin(lat1) * Math.sin(lat2) + Math.cos(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
-    return Math.atan2(numerator, denominator);
+function calculateMidpoint(point1: Point, point2: Point): Point {
+    const latitude = (point1.latitude + point2.latitude) / 2;
+    const longitude = (point1.longitude + point2.longitude) / 2;
+    return {latitude, longitude};
 }
 
 const triangleFeatures: Feature[] = [];
@@ -126,15 +120,26 @@ const triangleFeatures: Feature[] = [];
 // }
 
 const intersectionOfFirstTwo = calculateIntersectionPoints({
-    center: {lat: data[0][1], lng: data[0][0]},
-    radius: data[0][2] * 1000 / 6378137,
+    center: {latitude: data[0][1], longitude: data[0][0]},
+    radius: data[0][2],
 }, {
-    center: {lat: data[1][1], lng: data[1][0]},
-    radius: data[1][2] * 1000 / 6378137,
+    center: {latitude: data[1][1], longitude: data[1][0]},
+    radius: data[1][2],
 });
 console.log(intersectionOfFirstTwo, data[0], data[1]);
-triangleFeatures.push(point([intersectionOfFirstTwo[0].lng, intersectionOfFirstTwo[0].lat]));
-triangleFeatures.push(point([intersectionOfFirstTwo[1].lng, intersectionOfFirstTwo[1].lat]));
+triangleFeatures.push(point([intersectionOfFirstTwo[0]?.longitude, intersectionOfFirstTwo[0]?.latitude]));
+triangleFeatures.push(point([intersectionOfFirstTwo[1]?.longitude, intersectionOfFirstTwo[1]?.latitude]));
+
+triangleFeatures.push(point([data[0][0], data[0][1]]));
+triangleFeatures.push(point([data[1][0], data[1][1]]));
+
+const mid = calculateMidpoint(
+    intersectionOfFirstTwo[0]!,
+    intersectionOfFirstTwo[1]!
+);
+triangleFeatures.push(point(
+    [mid.longitude, mid.latitude]
+))
 
 
 type CircleArray = [number, number, number];
