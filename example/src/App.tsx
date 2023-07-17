@@ -2,9 +2,8 @@ import './App.css'
 import MapGL, {Layer, Source} from 'react-map-gl';
 import {
     Feature,
-    bearing,
     polygon,
-    area, lineString,
+    area, bearing,
 } from "@turf/turf";
 import seedrandom from 'seed-random';
 import KDBush from "kdbush";
@@ -12,6 +11,7 @@ import * as geokdbush from "geokdbush-tk";
 import CheapRuler from "cheap-ruler";
 
 const rulers = new Array<CheapRuler>(1800);
+
 function getRuler(lat: number): CheapRuler {
     const key = Math.floor(lat * 10);
     let ruler = rulers[key];
@@ -39,8 +39,15 @@ const data: [number, number, number][] = [
 
 const r = seedrandom("hi");
 
-for (let i = 0; i < 0; i++) {
+for (let i = 0; i < 500; i++) {
     data.push([data[0][0] + r() * 0.01, data[0][1] + r() * 0.01, 0.03]);
+}
+
+function bearingRadians(c1: [number, number, ...any[]], c2: [number, number, ...any[]]): number {
+    const a = Math.sin(c2[0] - c1[0]) * Math.cos(c2[1]);
+    const b = Math.cos(c1[1]) * Math.sin(c2[1]) -
+        Math.sin(c1[1]) * Math.cos(c2[1]) * Math.cos(c2[0] - c1[0]);
+    return Math.atan2(a, b);
 }
 
 interface IntersectionResult {
@@ -85,26 +92,8 @@ function calculateIntersection(circle1: CircleArray, circle2: CircleArray): Inte
     const angle2 = angle1 + intersectionAngle;
     const angle3 = angle1 - intersectionAngle;
 
-    const bearingToIntersection1FromCircle1 = angle2;
-    const bearingToIntersection2FromCircle1 = angle3 < angle2 ? angle3 + Math.PI * 2 : angle3;
-
-    const intersectionAngleB = Math.acos(
-        (circle2[2] * circle2[2] + dist * dist - circle1[2] * circle1[2]) /
-        (2 * circle2[2] * dist)
-    );
-
-    const angle1B = Math.atan2(
-        lon1 - lon2,
-        Math.log(
-            Math.tan(lat1 / 2 + Math.PI / 4) / Math.tan(lat2 / 2 + Math.PI / 4)
-        )
-    );
-
-    const angle2B = angle1B + intersectionAngleB;
-    const angle3B = angle1B - intersectionAngleB;
-
-    const bearingToIntersection1FromCircle2 = angle2B;
-    const bearingToIntersection2FromCircle2 = angle3B < angle2B ? angle3B + Math.PI * 2 : angle3B;
+    const bearingToIntersection1FromCircle1o = angle2;
+    const bearingToIntersection2FromCircle1o = angle3 < angle2 ? angle3 + Math.PI * 2 : angle3;
 
 // Calculate intersection point 1 coordinates
     const sinLat1 = Math.sin(lat1);
@@ -112,21 +101,25 @@ function calculateIntersection(circle1: CircleArray, circle2: CircleArray): Inte
     const cosAngle2 = Math.cos(angle2);
     const p1latSinPart = sinLat1 * Math.cos(circle1[2] / earthRadius) +
         cosLat1 * Math.sin(circle1[2] / earthRadius) * cosAngle2;
+    const p1latrad = Math.asin(p1latSinPart);
     const p1lat = toDegrees(Math.asin(p1latSinPart));
     const p1lngSinPart = Math.sin(angle2) * Math.sin(circle1[2] / earthRadius) * cosLat1;
     const p1lngCosPart = Math.cos(circle1[2] / earthRadius) - sinLat1 * Math.sin(toRadians(p1lat));
+    const p1lngrad = lon1 + Math.atan2(p1lngSinPart, p1lngCosPart);
     const p1lng = toDegrees(lon1 + Math.atan2(p1lngSinPart, p1lngCosPart));
 
 // Calculate intersection point 2 coordinates
     const cosAngle3 = Math.cos(angle3);
     const p2latSinPart = sinLat1 * Math.cos(circle1[2] / earthRadius) +
         cosLat1 * Math.sin(circle1[2] / earthRadius) * cosAngle3;
+    const p2latrad = Math.asin(p2latSinPart);
     const p2lat = toDegrees(Math.asin(p2latSinPart));
     const p2lngSinPart = Math.sin(angle3) * Math.sin(circle1[2] / earthRadius) * cosLat1;
     const p2lngCosPart = Math.cos(circle1[2] / earthRadius) - sinLat1 * Math.sin(toRadians(p2lat));
+    const p2lngrad = lon1 + Math.atan2(p2lngSinPart, p2lngCosPart);
     const p2lng = toDegrees(lon1 + Math.atan2(p2lngSinPart, p2lngCosPart));
 
-    // // Using p1 and p2, find bearings from circle2
+    // Using p1 and p2, find bearings from circle2
     // const bearingToIntersection1FromCircle2 = Math.atan2(
     //     Math.sin(lon1 + Math.atan2(p1lngSinPart, p1lngCosPart) - lon2) * Math.cos(Math.asin(p1latSinPart)),
     //     Math.cos(lat2) * Math.sin(Math.asin(p1latSinPart)) - Math.sin(lat2) * Math.cos(Math.asin(p1latSinPart)) * Math.cos(lon1 + Math.atan2(p1lngSinPart, p1lngCosPart) - lon2)
@@ -136,8 +129,18 @@ function calculateIntersection(circle1: CircleArray, circle2: CircleArray): Inte
     //     Math.sin(lon1 + Math.atan2(p2lngSinPart, p2lngCosPart) - lon2) * Math.cos(Math.asin(p2latSinPart)),
     //     Math.cos(lat2) * Math.sin(Math.asin(p2latSinPart)) - Math.sin(lat2) * Math.cos(Math.asin(p2latSinPart)) * Math.cos(lon1 + Math.atan2(p2lngSinPart, p2lngCosPart) - lon2)
     // );
+    //
+    // const bearingToIntersection1FromCircle1 = Math.atan2(
+    //     Math.sin(lon2 + Math.atan2(p1lngSinPart, p1lngCosPart) - lon1) * Math.cos(Math.asin(p1latSinPart)),
+    //     Math.cos(lat1) * Math.sin(Math.asin(p1latSinPart)) - Math.sin(lat1) * Math.cos(Math.asin(p1latSinPart)) * Math.cos(lon2 + Math.atan2(p1lngSinPart, p1lngCosPart) - lon1)
+    // );
+    //
+    // const bearingToIntersection2FromCircle1 = Math.atan2(
+    //     Math.sin(lon2 + Math.atan2(p2lngSinPart, p2lngCosPart) - lon1) * Math.cos(Math.asin(p2latSinPart)),
+    //     Math.cos(lat1) * Math.sin(Math.asin(p2latSinPart)) - Math.sin(lat1) * Math.cos(Math.asin(p2latSinPart)) * Math.cos(lon2 + Math.atan2(p2lngSinPart, p2lngCosPart) - lon1)
+    // );
 
-    console.log(toDegrees(bearingToIntersection1FromCircle2), toDegrees(bearingToIntersection2FromCircle2));
+    // console.log(toDegrees(bearingToIntersection1FromCircle2), toDegrees(bearingToIntersection2FromCircle2));
 
     return {
         points: [
@@ -145,8 +148,12 @@ function calculateIntersection(circle1: CircleArray, circle2: CircleArray): Inte
             [p2lng, p2lat]
         ],
         angles: [
-            [toDegrees(bearingToIntersection1FromCircle1), toDegrees(bearingToIntersection1FromCircle2)],
-            [toDegrees(bearingToIntersection2FromCircle1), toDegrees(bearingToIntersection2FromCircle2)]
+            // [toDegrees(bearingToIntersection1FromCircle1), toDegrees(bearingToIntersection1FromCircle2)],
+            // [toDegrees(bearingToIntersection2FromCircle1), toDegrees(bearingToIntersection2FromCircle2)],
+            // [bearing(circle1, [p1lng, p1lat]), bearing(circle2, [p1lng, p1lat])],
+            // [bearing(circle1, [p2lng, p2lat]), bearing(circle2, [p2lng, p2lat])],
+            [toDegrees(bearingRadians([lon1, lat1], [p1lngrad, p1latrad])), toDegrees(bearingRadians([lon2, lat2], [p1lngrad, p1latrad]))],
+            [toDegrees(bearingRadians([lon1, lat1], [p2lngrad, p2latrad])), toDegrees(bearingRadians([lon2, lat2], [p2lngrad, p2latrad]))],
         ],
         midpoint: [
             (p1lng + p2lng) / 2,
