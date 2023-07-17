@@ -5,12 +5,14 @@ import {
     Feature,
     bearing,
     // distance,
-    polygon, area,
+    polygon, area, circle,
 } from "@turf/turf";
 import seedrandom from 'seed-random';
 import KDBush from "kdbush";
 import * as geokdbush from "geokdbush-tk";
 import CheapRuler from "cheap-ruler";
+import Clipping from "polygon-clipping";
+const {union} = Clipping;
 
 const rulers = new Map<number, CheapRuler>();
 
@@ -24,8 +26,8 @@ function getRuler(lat: number): CheapRuler {
     return ruler;
 }
 
-function distance([lon1, lat1]: [number, number], [lon2, lat2]: [number, number]): number {
-    return getRuler(lat1).distance([lon1, lat1], [lon2, lat2]);
+function distance(c1: [number, number], c2: [number, number]): number {
+    return getRuler(c1[1]).distance(c1, c2);
     // return haversine(toRadians(lat1), toRadians(lon1), toRadians(lat2), toRadians(lon2), earthRadius);
 }
 
@@ -43,7 +45,7 @@ const r = seedrandom("hi");
 // for (let i = 0; i < 5000; i++) {
 //     data.push([data[0][0] + r() * 0.05, data[0][1] + r() * 0.05, r() * 0.1]);
 // }
-for (let i = 0; i < 10000; i++) {
+for (let i = 0; i < 5000; i++) {
     data.push([data[0][0] + r() * 0.05, data[0][1] + r() * 0.05, 0.03]);
 }
 
@@ -127,6 +129,25 @@ function haversine(lat1: number, lon1: number, lat2: number, lon2: number, radiu
 
 
 function generateFlattened(circles: CircleArray[]): Feature[] {
+    const startClipping = performance.now();
+
+    const circlePolys = circles.map(c => circle(c, c[2], {units: "kilometers"}));
+
+
+    union(circlePolys.map(i => i.geometry.coordinates as any)).map(i => ({
+        type: "Feature" as const,
+        properties: {},
+        geometry: {
+            type: "Polygon" as const,
+            coordinates: i,
+        },
+    }));
+
+    const endClipping = performance.now();
+
+    console.log(`Clipping took ${endClipping - startClipping}ms`);
+
+
     const features: Feature[] = [];
 
     // Benchmark the performance of calculating the intersection point
@@ -144,7 +165,7 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
 
     const maximumRadius = circles.reduce((max, c) => c[2] > max ? c[2] : max, 0);
 
-    const circleGroups: number[] = new Array(circles.length);
+    const circleGroups: number[] = new Array(circles.length).fill(0).map((_, i) => i);
 
     for (let i = 0; i < circles.length; i++) {
         const circle = circles[i];
@@ -154,7 +175,7 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
 
             if (circle[2] + otherCircle[2] > distance([circle[0], circle[1]], [otherCircle[0], otherCircle[1]])) {
                 if (circleGroups[potentialIntersection] === undefined) {
-                    circleGroups[potentialIntersection] = i;
+                    circleGroups[potentialIntersection] = circleGroups[i];
                 } else {
                     const groupToUpdate = circleGroups[potentialIntersection];
                     for (let j = 0; j < circles.length; j++) {
@@ -178,9 +199,6 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
                     intersectionPointsByCircle[potentialIntersection].push(pt);
                 }
             }
-        }
-        if (circleGroups[i] === undefined) {
-            circleGroups[i] = i;
         }
     }
 
@@ -302,8 +320,8 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
                 const start = segment[0];
                 const end = segment[segment.length - 1];
 
-                const startDistance = distance(currentPolygon[currentPolygon.length - 1], start, {units: "kilometers"});
-                const endDistance = distance(currentPolygon[0], end, {units: "kilometers"});
+                const startDistance = distance(currentPolygon[currentPolygon.length - 1], start);
+                const endDistance = distance(currentPolygon[0], end);
 
                 if (startDistance < 0.0005) {
                     currentPolygon.push(...segment);
@@ -317,25 +335,25 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
                     break;
                 }
             }
-            if (currentPolygon.length > 2 && distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1], {units: "kilometers"}) < 0.0005) {
+            if (currentPolygon.length > 2 && distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]) < 0.0005) {
                 groupPolygon.push([...currentPolygon, currentPolygon[0]]);
                 currentPolygon = [];
             } else if (!found) {
-                if (currentPolygon.length > 2 && distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1], {units: "kilometers"}) < 0.05) {
+                if (currentPolygon.length > 2 && distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]) < 0.05) {
                     groupPolygon.push([...currentPolygon, currentPolygon[0]]);
                     currentPolygon = [];
                 } else if (currentPolygon.length) {
-                    console.error("Could not find a segment to connect to", currentPolygon, segments, distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1], {units: "kilometers"}));
+                    console.error("Could not find a segment to connect to", currentPolygon, segments, distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]));
                     throw new Error("Could not find a segment to connect to");
                 }
             }
         }
 
-        if (currentPolygon.length > 2 && distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1], {units: "kilometers"}) < 0.05) {
+        if (currentPolygon.length > 2 && distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]) < 0.05) {
             groupPolygon.push([...currentPolygon, currentPolygon[0]]);
             currentPolygon = [];
         } else if (currentPolygon.length) {
-            console.error("Could not find a segment to connect to", currentPolygon, segments, distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1], {units: "kilometers"}));
+            console.error("Could not find a segment to connect to", currentPolygon, segments, distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]));
             throw new Error("Could not find a segment to connect to");
         }
 
