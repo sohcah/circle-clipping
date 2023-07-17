@@ -39,18 +39,14 @@ const data: [number, number, number][] = [
 
 const r = seedrandom("hi");
 
-for (let i = 0; i < 5000; i++) {
-    data.push([data[0][0] + r() * 0.01, data[0][1] + r() * 0.01, 0.03]);
-}
-
-interface IntersectionResult {
-    angles: [number, number][];
+for (let i = 0; i < 10000; i++) {
+    data.push([data[0][0] + r() * 0.05, data[0][1] + r() * 0.05, 0.05 * r()]);
 }
 
 type CircleArray = [number, number, number];
 const earthRadius = 6371.0088; // Radius of the Earth in kilometers
 
-function calculateIntersection(circle1: CircleArray, circle2: CircleArray): IntersectionResult | null {
+function calculateIntersection(circle1: CircleArray, circle2: CircleArray): [number, number][] | null {
     // Convert the coordinates to radians
     const lat1 = toRadians(circle1[1]);
     const lon1 = toRadians(circle1[0]);
@@ -128,12 +124,10 @@ function calculateIntersection(circle1: CircleArray, circle2: CircleArray): Inte
         Math.sin(lat2) * p2latCosPart * Math.cos(p2lngrad - lon2);
     const bearingC2P2 = Math.atan2(bearingC2P2A, bearingC2P2B);
 
-    return {
-        angles: [
-            [toDegrees(bearingC1P1), toDegrees(bearingC2P1)],
-            [toDegrees(bearingC1P2), toDegrees(bearingC2P2)],
-        ]
-    };
+    return [
+        [toDegrees(bearingC1P1), toDegrees(bearingC2P1)],
+        [toDegrees(bearingC1P2), toDegrees(bearingC2P2)],
+    ];
 }
 
 // Helper function to convert degrees to radians
@@ -180,7 +174,7 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
     kdbush.finish();
 
     const intersectingCircles: number[][] = new Array(circles.length).fill(null!).map(() => []);
-    const intersectionAnglesByCircle: [number, number][][] = new Array(circles.length).fill(null!).map(() => [])
+    const intersectionAnglesByCircle: number[][] = new Array(circles.length).fill(null!).map(() => [])
 
     const maximumRadius = circles.reduce((max, c) => c[2] > max ? c[2] : max, 0);
 
@@ -219,50 +213,48 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
 
             if (circle[2] + otherCircle[2] > distance(circle, otherCircle)) {
                 queue.add(potentialIntersection);
-            }
 
-            const intersection = calculateIntersection(
-                circle,
-                otherCircle,
-            );
+                const intersectionAngles = calculateIntersection(
+                    circle,
+                    otherCircle,
+                );
 
-            if (intersection) {
-                for (const [a1, a2] of intersection.angles) {
-                    intersectionAnglesByCircle[i].push([a1, potentialIntersection]);
-                    intersectionAnglesByCircle[potentialIntersection].push([a2, i]);
-                    intersectingCircles[i].push(potentialIntersection);
-                    intersectingCircles[potentialIntersection].push(i);
+                if (intersectionAngles) {
+                    for (const [a1, a2] of intersectionAngles) {
+                        intersectionAnglesByCircle[i].push(a1);
+                        intersectionAnglesByCircle[potentialIntersection].push(a2);
+                    }
                 }
+                intersectingCircles[i].push(potentialIntersection);
+                intersectingCircles[potentialIntersection].push(i);
             }
         }
     }
 
-    console.log("number of intersection points", intersectionAnglesByCircle.reduce((sum, i) => sum + i.length, 0) / 2);
-
     console.log(`Grouping took ${performance.now() - segmentStart}ms`);
     segmentStart = performance.now();
 
-    const circleArcs: [number, number, number, number][][] = new Array(circles.length).fill(null!).map(() => []);
+    const circleArcs: [number, number][][] = new Array(circles.length).fill(null!).map(() => []);
 
     for (let i = 0; i < circles.length; i++) {
         const intersectionAngles = intersectionAnglesByCircle[i];
 
         if (intersectionAngles.length === 0) {
-            circleArcs[i].push([0, 360, -1, -1]);
+            circleArcs[i].push([0, 360]);
             continue;
         }
 
-        const sortedAngles = intersectionAngles.slice().sort((a, b) => a[0] - b[0]);
+        const sortedAngles = intersectionAngles.slice().sort((a, b) => a - b);
 
         for (let j = 0; j < sortedAngles.length; j++) {
-            let [startAngle, startIntersect] = sortedAngles[j];
-            let [endAngle, endIntersect] = sortedAngles[(j + 1) % sortedAngles.length];
+            let startAngle = sortedAngles[j];
+            let endAngle = sortedAngles[(j + 1) % sortedAngles.length];
 
             if (endAngle < startAngle) {
                 endAngle += 360;
             }
 
-            circleArcs[i].push([startAngle, endAngle, startIntersect, endIntersect]);
+            circleArcs[i].push([startAngle, endAngle]);
         }
     }
 
@@ -305,36 +297,7 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
     console.log(`Segmenting took ${performance.now() - segmentStart}ms`);
     segmentStart = performance.now();
 
-    const arcSegmentsKDBush = new KDBush(arcSegments.length);
-
-    for (let i = 0; i < arcSegments.length; i++) {
-        const [, segment] = arcSegments[i]!;
-        const middleCoordinate = segment[Math.floor(segment.length / 2)];
-        arcSegmentsKDBush.add(middleCoordinate[0], middleCoordinate[1]);
-    }
-
-    arcSegmentsKDBush.finish();
-
-    console.log(`Segment indexing took ${performance.now() - segmentStart}ms`);
-    segmentStart = performance.now();
-
-    const removedArcs = new Array(arcSegments.length).fill(false);
-    for (const circle of circles) {
-        const overlappingArcs = geokdbush.around(arcSegmentsKDBush, circle[0], circle[1], Infinity, circle[2] - 0.0001);
-        for (const overlappingArc of overlappingArcs) {
-            removedArcs[overlappingArc] = true;
-        }
-    }
-
-    console.log(removedArcs.filter(a => a).length, "arcs removed");
-
-    const filteredSegments = arcSegments.filter((_, n) => !removedArcs[n]);
-
-    console.log(`Filtering took ${performance.now() - segmentStart}ms`);
-    segmentStart = performance.now();
-
-
-    const filteredSegmentsByGroup = filteredSegments
+    const filteredSegmentsByGroup = arcSegments
         .reduce((acc, segment) => {
             const [group, arc] = segment!;
             acc[group] ??= [];
@@ -391,7 +354,7 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
                 groupPolygon.push([...currentPolygon, currentPolygon[0]]);
                 currentPolygon = [];
             } else if (!found) {
-                if (currentPolygon.length > 2 && distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]) < 0.05) {
+                if (currentPolygon.length > 2 && distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]) < 0.1) {
                     groupPolygon.push([...currentPolygon, currentPolygon[0]]);
                     currentPolygon = [];
                 } else if (currentPolygon.length) {
@@ -401,7 +364,7 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
             }
         }
 
-        if (currentPolygon.length > 2 && distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]) < 0.05) {
+        if (currentPolygon.length > 2 && distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]) < 0.1) {
             groupPolygon.push([...currentPolygon, currentPolygon[0]]);
             currentPolygon = [];
         } else if (currentPolygon.length) {
