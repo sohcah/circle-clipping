@@ -1,34 +1,34 @@
 import './App.css'
 import MapGL, {Layer, Source} from 'react-map-gl';
 import {
-    destination,
     Feature,
     bearing,
-    // distance,
-    polygon, area, circle,
+    polygon,
+    area,
 } from "@turf/turf";
 import seedrandom from 'seed-random';
 import KDBush from "kdbush";
 import * as geokdbush from "geokdbush-tk";
 import CheapRuler from "cheap-ruler";
-import Clipping from "polygon-clipping";
-const {union} = Clipping;
 
-const rulers = new Map<number, CheapRuler>();
+const rulers = new Array<CheapRuler>(1800);
 
 function getRuler(lat: number): CheapRuler {
     const key = Math.floor(lat * 10);
-    let ruler = rulers.get(key);
+    let ruler = rulers[key];
     if (!ruler) {
         ruler = new CheapRuler(lat, "kilometers");
-        rulers.set(key, ruler);
+        rulers[key] = ruler;
     }
     return ruler;
 }
 
-function distance(c1: [number, number], c2: [number, number]): number {
-    return getRuler(c1[1]).distance(c1, c2);
-    // return haversine(toRadians(lat1), toRadians(lon1), toRadians(lat2), toRadians(lon2), earthRadius);
+function distance(c1: [number, number, ...any[]], c2: [number, number, ...any[]]): number {
+    return getRuler(c1[1]).distance(c1 as [number, number], c2 as [number, number]);
+}
+
+function destination(c1: [number, number, ...any[]], distance: number, bearing: number): [number, number] {
+    return getRuler(c1[1]).destination(c1 as [number, number], distance, bearing);
 }
 
 const data: [number, number, number][] = [
@@ -40,13 +40,8 @@ const data: [number, number, number][] = [
 
 const r = seedrandom("hi");
 
-// 9720: kinda broken
-// 9750: broken
-// for (let i = 0; i < 5000; i++) {
-//     data.push([data[0][0] + r() * 0.05, data[0][1] + r() * 0.05, r() * 0.1]);
-// }
 for (let i = 0; i < 5000; i++) {
-    data.push([data[0][0] + r() * 0.05, data[0][1] + r() * 0.05, 0.03]);
+    data.push([data[0][0] + r() * 0.01, data[0][1] + r() * 0.01, 0.03]);
 }
 
 interface IntersectionResult {
@@ -66,18 +61,18 @@ function calculateIntersection(circle1: CircleArray, circle2: CircleArray): Inte
     const lon2 = toRadians(circle2[0]);
 
     // Calculate the distance between the circle centers
-    const distance = haversine(lat1, lon1, lat2, lon2, earthRadius);
+    const dist = distance(circle1, circle2);
 
     // Check if the circles intersect
-    if (distance > circle1[2] + circle2[2] || distance < Math.abs(circle1[2] - circle2[2])) {
+    if (dist > circle1[2] + circle2[2] || dist < Math.abs(circle1[2] - circle2[2])) {
         // No intersection points or circles are contained within each other
         return null;
     }
 
     // Calculate the intersection angles
     const intersectionAngle = Math.acos(
-        (circle1[2] * circle1[2] + distance * distance - circle2[2] * circle2[2]) /
-        (2 * circle1[2] * distance)
+        (circle1[2] * circle1[2] + dist * dist - circle2[2] * circle2[2]) /
+        (2 * circle1[2] * dist)
     );
 
     // Calculate the coordinates of the intersection points
@@ -116,42 +111,31 @@ function toDegrees(radians: number): number {
     return radians * (180 / Math.PI);
 }
 
-// Haversine formula to calculate the great-circle distance between two points
-function haversine(lat1: number, lon1: number, lat2: number, lon2: number, radius: number): number {
-    const dlat = lat2 - lat1;
-    const dlon = lon2 - lon1;
-    const a =
-        Math.sin(dlat / 2) * Math.sin(dlat / 2) +
-        Math.cos(lat1) * Math.cos(lat2) * Math.sin(dlon / 2) * Math.sin(dlon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return radius * c;
-}
-
-
 function generateFlattened(circles: CircleArray[]): Feature[] {
-    const startClipping = performance.now();
-
-    const circlePolys = circles.map(c => circle(c, c[2], {units: "kilometers"}));
-
-
-    union(circlePolys.map(i => i.geometry.coordinates as any)).map(i => ({
-        type: "Feature" as const,
-        properties: {},
-        geometry: {
-            type: "Polygon" as const,
-            coordinates: i,
-        },
-    }));
-
-    const endClipping = performance.now();
-
-    console.log(`Clipping took ${endClipping - startClipping}ms`);
+    // const startClipping = performance.now();
+    //
+    // const circlePolys = circles.map(c => circle(c, c[2], {units: "kilometers"}));
+    //
+    //
+    // union(circlePolys.map(i => i.geometry.coordinates as any)).map(i => ({
+    //     type: "Feature" as const,
+    //     properties: {},
+    //     geometry: {
+    //         type: "Polygon" as const,
+    //         coordinates: i,
+    //     },
+    // }));
+    //
+    // const endClipping = performance.now();
+    //
+    // console.log(`Clipping took ${endClipping - startClipping}ms`);
 
 
     const features: Feature[] = [];
 
     // Benchmark the performance of calculating the intersection point
     const start = performance.now();
+    let segmentStart = performance.now();
 
     const kdbush = new KDBush(circles.length);
 
@@ -165,28 +149,42 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
 
     const maximumRadius = circles.reduce((max, c) => c[2] > max ? c[2] : max, 0);
 
-    const circleGroups: number[] = new Array(circles.length).fill(0).map((_, i) => i);
+    const circleGroups: number[] = new Array(circles.length).fill(-1);
 
+    const unprocessedCircles = new Set<number>();
     for (let i = 0; i < circles.length; i++) {
+        unprocessedCircles.add(i);
+    }
+
+    const queue = new Set([0]);
+
+    let currentGroup = 0;
+
+    let attempts = 0;
+    while (queue.size || unprocessedCircles.size) {
+        if (!queue.size) {
+            const nextCircle = unprocessedCircles.values().next().value;
+            queue.add(nextCircle);
+            currentGroup++;
+        }
+        if (attempts++ > circles.length) {
+            throw new Error("Too many grouping attempts");
+        }
+        const i = queue.values().next().value;
+        queue.delete(i);
+        if (!unprocessedCircles.has(i)) {
+            continue;
+        }
+        unprocessedCircles.delete(i);
         const circle = circles[i];
-        const potentialIntersections = geokdbush.around(kdbush, circle[0], circle[1], Infinity, maximumRadius + circle[2], c => c !== i);
+        circleGroups[i] = currentGroup;
+        const potentialIntersections = geokdbush.around(kdbush, circle[0], circle[1], Infinity, maximumRadius + circle[2], c => c !== i && unprocessedCircles.has(c));
         for (const potentialIntersection of potentialIntersections) {
             const otherCircle = circles[potentialIntersection];
 
-            if (circle[2] + otherCircle[2] > distance([circle[0], circle[1]], [otherCircle[0], otherCircle[1]])) {
-                if (circleGroups[potentialIntersection] === undefined) {
-                    circleGroups[potentialIntersection] = circleGroups[i];
-                } else {
-                    const groupToUpdate = circleGroups[potentialIntersection];
-                    for (let j = 0; j < circles.length; j++) {
-                        if (circleGroups[j] === groupToUpdate) {
-                            circleGroups[j] = i;
-                        }
-                    }
-                }
+            if (circle[2] + otherCircle[2] > distance(circle, otherCircle)) {
+                queue.add(potentialIntersection);
             }
-
-            if (potentialIntersection < i) continue;
 
             const intersection = calculateIntersection(
                 circle,
@@ -201,6 +199,9 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
             }
         }
     }
+
+    console.log(`Grouping took ${performance.now() - segmentStart}ms`);
+    segmentStart = performance.now();
 
     const circleArcs: [number, number][][] = new Array(circles.length).fill(null!).map(() => []);
 
@@ -241,6 +242,9 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
         }
     }
 
+    console.log(`Arcing took ${performance.now() - segmentStart}ms`);
+    segmentStart = performance.now();
+
     const arcSegments: ([number, [number, number][]] | null)[] = [];
 
     // Create line segments for each circle arc with 10 points per arc
@@ -259,13 +263,16 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
             const points: [number, number][] = [];
             for (let p = 0; p <= noPoints; p++) {
                 const angle = startAngle + p * deltaAngle;
-                const pt = destination([circle[0], circle[1]], circle[2], angle * 180 / Math.PI + 180, {units: "kilometers"});
-                points.push(pt.geometry.coordinates);
+                const pt = destination([circle[0], circle[1]], circle[2], angle * 180 / Math.PI + 180);
+                points.push(pt);
             }
 
             arcSegments.push([circleGroups[i], points]);
         }
     }
+
+    console.log(`Segmenting took ${performance.now() - segmentStart}ms`);
+    segmentStart = performance.now();
 
     const arcSegmentsKDBush = new KDBush(arcSegments.length);
 
@@ -277,15 +284,24 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
 
     arcSegmentsKDBush.finish();
 
+    console.log(`Segment indexing took ${performance.now() - segmentStart}ms`);
+    segmentStart = performance.now();
+
+    const removedArcs = new Array(arcSegments.length).fill(false);
     for (const circle of circles) {
         const overlappingArcs = geokdbush.around(arcSegmentsKDBush, circle[0], circle[1], Infinity, circle[2] - 0.0001);
         for (const overlappingArc of overlappingArcs) {
-            arcSegments[overlappingArc] = null;
+            removedArcs[overlappingArc] = true;
         }
     }
 
+    const filteredSegments = arcSegments.filter((_, n) => !removedArcs[n]);
 
-    const filteredSegmentsByGroup = arcSegments.filter(s => s !== null)
+    console.log(`Filtering took ${performance.now() - segmentStart}ms`);
+    segmentStart = performance.now();
+
+
+    const filteredSegmentsByGroup = filteredSegments
         .reduce((acc, segment) => {
             const [group, arc] = segment!;
             acc[group] ??= [];
@@ -294,6 +310,9 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
         }, {} as {
             [key: number]: [number, number][][]
         });
+
+    console.log(`Grouping took ${performance.now() - segmentStart}ms`);
+    segmentStart = performance.now();
 
     // Final step: Stitch together groups of line segments that are connected to make polygons
     const polygons: [number, number][][][] = [];
@@ -376,6 +395,9 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
         polygons.push(groupPolygon);
     }
 
+    console.log(`Merging took ${performance.now() - segmentStart}ms`);
+    segmentStart = performance.now();
+
     // let i = 0;
     for (const poly of polygons) {
         if (poly.length === 0) continue;
@@ -383,6 +405,8 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
             color: `#${Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, "0")}`,
         }));
     }
+
+    console.log(`Featuring took ${performance.now() - segmentStart}ms`);
     const end = performance.now();
     console.log(`Time taken: ${end - start}ms`);
 
