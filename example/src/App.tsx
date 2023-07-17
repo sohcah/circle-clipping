@@ -4,7 +4,7 @@ import {
     Feature,
     bearing,
     polygon,
-    area,
+    area, lineString,
 } from "@turf/turf";
 import seedrandom from 'seed-random';
 import KDBush from "kdbush";
@@ -12,7 +12,6 @@ import * as geokdbush from "geokdbush-tk";
 import CheapRuler from "cheap-ruler";
 
 const rulers = new Array<CheapRuler>(1800);
-
 function getRuler(lat: number): CheapRuler {
     const key = Math.floor(lat * 10);
     let ruler = rulers[key];
@@ -40,12 +39,13 @@ const data: [number, number, number][] = [
 
 const r = seedrandom("hi");
 
-for (let i = 0; i < 5000; i++) {
+for (let i = 0; i < 0; i++) {
     data.push([data[0][0] + r() * 0.01, data[0][1] + r() * 0.01, 0.03]);
 }
 
 interface IntersectionResult {
     points: [number, number][];
+    angles: [number, number][];
     midpoint: [number, number];
 }
 
@@ -69,32 +69,86 @@ function calculateIntersection(circle1: CircleArray, circle2: CircleArray): Inte
         return null;
     }
 
-    // Calculate the intersection angles
     const intersectionAngle = Math.acos(
         (circle1[2] * circle1[2] + dist * dist - circle2[2] * circle2[2]) /
         (2 * circle1[2] * dist)
     );
 
-    // Calculate the coordinates of the intersection points
-    const angle1 = Math.atan2(lon2 - lon1, Math.log(Math.tan(lat2 / 2 + Math.PI / 4) / Math.tan(lat1 / 2 + Math.PI / 4)));
+// Calculate the coordinates of the intersection points
+    const angle1 = Math.atan2(
+        lon2 - lon1,
+        Math.log(
+            Math.tan(lat2 / 2 + Math.PI / 4) / Math.tan(lat1 / 2 + Math.PI / 4)
+        )
+    );
+
     const angle2 = angle1 + intersectionAngle;
     const angle3 = angle1 - intersectionAngle;
 
-    const p1lat = toDegrees(Math.asin(Math.sin(lat1) * Math.cos(circle1[2] / earthRadius) +
-        Math.cos(lat1) * Math.sin(circle1[2] / earthRadius) * Math.cos(angle2)));
-    const p1lng = toDegrees(lon1 + Math.atan2(Math.sin(angle2) * Math.sin(circle1[2] / earthRadius) * Math.cos(lat1),
-        Math.cos(circle1[2] / earthRadius) - Math.sin(lat1) * Math.sin(toRadians(p1lat))))
+    const bearingToIntersection1FromCircle1 = angle2;
+    const bearingToIntersection2FromCircle1 = angle3 < angle2 ? angle3 + Math.PI * 2 : angle3;
 
-    const p2lat = toDegrees(Math.asin(Math.sin(lat1) * Math.cos(circle1[2] / earthRadius) +
-        Math.cos(lat1) * Math.sin(circle1[2] / earthRadius) * Math.cos(angle3)));
-    const p2lng = toDegrees(lon1 + Math.atan2(Math.sin(angle3) * Math.sin(circle1[2] / earthRadius) * Math.cos(lat1),
-        Math.cos(circle1[2] / earthRadius) - Math.sin(lat1) * Math.sin(toRadians(p2lat))));
+    const intersectionAngleB = Math.acos(
+        (circle2[2] * circle2[2] + dist * dist - circle1[2] * circle1[2]) /
+        (2 * circle2[2] * dist)
+    );
+
+    const angle1B = Math.atan2(
+        lon1 - lon2,
+        Math.log(
+            Math.tan(lat1 / 2 + Math.PI / 4) / Math.tan(lat2 / 2 + Math.PI / 4)
+        )
+    );
+
+    const angle2B = angle1B + intersectionAngleB;
+    const angle3B = angle1B - intersectionAngleB;
+
+    const bearingToIntersection1FromCircle2 = angle2B;
+    const bearingToIntersection2FromCircle2 = angle3B < angle2B ? angle3B + Math.PI * 2 : angle3B;
+
+// Calculate intersection point 1 coordinates
+    const sinLat1 = Math.sin(lat1);
+    const cosLat1 = Math.cos(lat1);
+    const cosAngle2 = Math.cos(angle2);
+    const p1latSinPart = sinLat1 * Math.cos(circle1[2] / earthRadius) +
+        cosLat1 * Math.sin(circle1[2] / earthRadius) * cosAngle2;
+    const p1lat = toDegrees(Math.asin(p1latSinPart));
+    const p1lngSinPart = Math.sin(angle2) * Math.sin(circle1[2] / earthRadius) * cosLat1;
+    const p1lngCosPart = Math.cos(circle1[2] / earthRadius) - sinLat1 * Math.sin(toRadians(p1lat));
+    const p1lng = toDegrees(lon1 + Math.atan2(p1lngSinPart, p1lngCosPart));
+
+// Calculate intersection point 2 coordinates
+    const cosAngle3 = Math.cos(angle3);
+    const p2latSinPart = sinLat1 * Math.cos(circle1[2] / earthRadius) +
+        cosLat1 * Math.sin(circle1[2] / earthRadius) * cosAngle3;
+    const p2lat = toDegrees(Math.asin(p2latSinPart));
+    const p2lngSinPart = Math.sin(angle3) * Math.sin(circle1[2] / earthRadius) * cosLat1;
+    const p2lngCosPart = Math.cos(circle1[2] / earthRadius) - sinLat1 * Math.sin(toRadians(p2lat));
+    const p2lng = toDegrees(lon1 + Math.atan2(p2lngSinPart, p2lngCosPart));
+
+    // // Using p1 and p2, find bearings from circle2
+    // const bearingToIntersection1FromCircle2 = Math.atan2(
+    //     Math.sin(lon1 + Math.atan2(p1lngSinPart, p1lngCosPart) - lon2) * Math.cos(Math.asin(p1latSinPart)),
+    //     Math.cos(lat2) * Math.sin(Math.asin(p1latSinPart)) - Math.sin(lat2) * Math.cos(Math.asin(p1latSinPart)) * Math.cos(lon1 + Math.atan2(p1lngSinPart, p1lngCosPart) - lon2)
+    // );
+    //
+    // const bearingToIntersection2FromCircle2 = Math.atan2(
+    //     Math.sin(lon1 + Math.atan2(p2lngSinPart, p2lngCosPart) - lon2) * Math.cos(Math.asin(p2latSinPart)),
+    //     Math.cos(lat2) * Math.sin(Math.asin(p2latSinPart)) - Math.sin(lat2) * Math.cos(Math.asin(p2latSinPart)) * Math.cos(lon1 + Math.atan2(p2lngSinPart, p2lngCosPart) - lon2)
+    // );
+
+    console.log(toDegrees(bearingToIntersection1FromCircle2), toDegrees(bearingToIntersection2FromCircle2));
 
     return {
         points: [
             [p1lng, p1lat],
             [p2lng, p2lat]
-        ], midpoint: [
+        ],
+        angles: [
+            [toDegrees(bearingToIntersection1FromCircle1), toDegrees(bearingToIntersection1FromCircle2)],
+            [toDegrees(bearingToIntersection2FromCircle1), toDegrees(bearingToIntersection2FromCircle2)]
+        ],
+        midpoint: [
             (p1lng + p2lng) / 2,
             (p1lat + p2lat) / 2
         ]
@@ -130,7 +184,6 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
     //
     // console.log(`Clipping took ${endClipping - startClipping}ms`);
 
-
     const features: Feature[] = [];
 
     // Benchmark the performance of calculating the intersection point
@@ -145,7 +198,7 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
 
     kdbush.finish();
 
-    const intersectionPointsByCircle: [number, number][][] = new Array(circles.length).fill(null!).map(() => [])
+    const intersectionAnglesByCircle: number[][] = new Array(circles.length).fill(null!).map(() => [])
 
     const maximumRadius = circles.reduce((max, c) => c[2] > max ? c[2] : max, 0);
 
@@ -192,13 +245,17 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
             );
 
             if (intersection) {
-                for (const pt of intersection.points) {
-                    intersectionPointsByCircle[i].push(pt);
-                    intersectionPointsByCircle[potentialIntersection].push(pt);
+                for (const [a1, a2] of intersection.angles) {
+                    intersectionAnglesByCircle[i].push(a1);
+                    intersectionAnglesByCircle[potentialIntersection].push(a2);
                 }
             }
         }
     }
+
+    console.log(intersectionAnglesByCircle);
+
+    console.log("number of intersection points", intersectionAnglesByCircle.reduce((sum, i) => sum + i.length, 0) / 2);
 
     console.log(`Grouping took ${performance.now() - segmentStart}ms`);
     segmentStart = performance.now();
@@ -206,35 +263,21 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
     const circleArcs: [number, number][][] = new Array(circles.length).fill(null!).map(() => []);
 
     for (let i = 0; i < circles.length; i++) {
-        const circle = circles[i];
-        const intersectionPoints = intersectionPointsByCircle[i];
+        const intersectionAngles = intersectionAnglesByCircle[i];
 
-        if (intersectionPoints.length === 0) {
-            circleArcs[i].push([0, 2 * Math.PI]);
+        if (intersectionAngles.length === 0) {
+            circleArcs[i].push([0, 360]);
             continue;
         }
 
-        const angles = intersectionPoints.map(pt => bearing(pt, circle));
+        const sortedAngles = intersectionAngles.slice().sort((a, b) => a - b);
 
-        angles.sort((a, b) => a - b);
-
-        for (let j = 0; j < angles.length; j++) {
-            const bearing1 = angles[j]
-            const bearing2 = angles[(j + 1) % angles.length];
-
-            let startAngle = bearing1 * Math.PI / 180;
-            let endAngle = bearing2 * Math.PI / 180;
-
-            if (startAngle < 0) {
-                startAngle += 2 * Math.PI;
-            }
-
-            if (endAngle < 0) {
-                endAngle += 2 * Math.PI;
-            }
+        for (let j = 0; j < sortedAngles.length; j++) {
+            let startAngle = sortedAngles[j]
+            let endAngle = sortedAngles[(j + 1) % sortedAngles.length];
 
             if (endAngle < startAngle) {
-                endAngle += 2 * Math.PI;
+                endAngle += 360;
             }
 
             circleArcs[i].push([startAngle, endAngle]);
@@ -255,21 +298,23 @@ function generateFlattened(circles: CircleArray[]): Feature[] {
         for (const arc of arcs) {
             let [startAngle, endAngle] = arc;
             if (startAngle > endAngle) {
-                endAngle += 2 * Math.PI;
+                endAngle += 360;
             }
-            const noPoints = Math.floor(Math.max(5, Math.abs(endAngle - startAngle) * 10));
+            const noPoints = Math.floor(Math.max(5, Math.abs(endAngle - startAngle) * 0.2));
             const deltaAngle = (endAngle - startAngle) / noPoints;
 
             const points: [number, number][] = [];
             for (let p = 0; p <= noPoints; p++) {
                 const angle = startAngle + p * deltaAngle;
-                const pt = destination([circle[0], circle[1]], circle[2], angle * 180 / Math.PI + 180);
+                const pt = destination([circle[0], circle[1]], circle[2], angle);
                 points.push(pt);
             }
 
             arcSegments.push([circleGroups[i], points]);
         }
     }
+
+    console.log(`Found ${arcSegments.length} arc segments`);
 
     console.log(`Segmenting took ${performance.now() - segmentStart}ms`);
     segmentStart = performance.now();
