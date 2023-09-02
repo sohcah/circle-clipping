@@ -2811,6 +2811,8 @@ __metadata:
   resolution: "circle-clipping@workspace:."
   dependencies:
     "@turf/area": ^6.5.0
+    "@turf/destination": ^6.5.0
+    "@turf/distance": ^6.5.0
     "@turf/helpers": ^6.5.0
     cheap-ruler: ^3.0.2
     geokdbush-tk: ^2.0.3

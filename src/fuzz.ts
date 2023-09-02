@@ -46,5 +46,71 @@ function fuzzRange() {
   console.log("Fail: ", fail);
 }
 
+function fuzzRandom() {
+  let success = 0;
+  let fail = 0;
+  for (let i = 0; i < 1000; i++) {
+    const r = seedrandom(i.toString() + "seed4");
+    let data: [number, number, number][] = [];
+    for (let n = 0; n < 500; n++) {
+      data.push([(r() - 0.5) * 720, r() * 2, r() * 20]);
+    }
+    try {
+      circleUnion(data, {});
+      success++;
+    } catch (err) {
+      console.info("Failed on line: ", i)
+      fail++;
+    }
+  }
+  console.log("Success: ", success);
+  console.log("Fail: ", fail);
+}
+
+function fuzzStrong() {
+  let success = 0;
+  let fail = 0;
+  for (let i = 0; i < 1000; i++) {
+    const r = seedrandom(i.toString() + "seed4");
+    const lngBase = (r() - 0.5) * 720;
+    const lngMult = r() * 720;
+    const latBase = (r() - 0.5) * 360;
+    const latMult = r() * 360;
+    const radiusBase = r() * 20;
+    const radiusMult = r() * 20;
+    let data: [number, number, number][] = [];
+    for (let n = 0; n < 500; n++) {
+      data.push([
+        lngBase + r() * lngMult,
+        // The library currently doesn't handle latitudes outside the range of -85 to 85
+        Math.max(-85, Math.min(85,
+          latBase + r() * latMult,
+        )),
+        radiusBase + r() * radiusMult
+      ]);
+    }
+    try {
+      circleUnion(data, {});
+      success++;
+    } catch (err) {
+      console.info("Failed on line: ", i)
+      console.table({
+        lngBase,
+        lngMult,
+        latBase,
+        latMult,
+        radiusBase,
+        radiusMult
+      })
+      fail++;
+      return;
+    }
+  }
+  console.log("Success: ", success);
+  console.log("Fail: ", fail);
+}
+
 fuzz360Edge();
 fuzzRange();
+fuzzRandom();
+fuzzStrong();

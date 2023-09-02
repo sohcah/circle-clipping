@@ -3,6 +3,8 @@ import {
     polygon,
 } from "@turf/helpers";
 import area from "@turf/area";
+import turfDistance from "@turf/distance";
+import turfDestination from "@turf/destination";
 import KDBush from "kdbush";
 import { around } from "geokdbush-tk";
 import CheapRuler from "cheap-ruler";
@@ -19,18 +21,26 @@ function getRuler(lat: number): CheapRuler {
     return ruler;
 }
 
-function distance(c1: [number, number, ...any[]], c2: [number, number, ...any[]]): number {
-    return getRuler(c1[1]).distance(c1 as [number, number], c2 as [number, number]);
+function fastDistance(c1: [number, number, ...any[]], c2: [number, number, ...any[]]): number {
+  return getRuler(c1[1]).distance(c1 as [number, number], c2 as [number, number]);
+}
+function slowDistance(c1: [number, number, ...any[]], c2: [number, number, ...any[]]): number {
+    return turfDistance(c1, c2, {units: "kilometers"});
 }
 
-function destination(c1: [number, number, ...any[]], distance: number, bearing: number): [number, number] {
-    return getRuler(c1[1]).destination(c1 as [number, number], distance, bearing);
+function fastDestination(c1: [number, number, ...any[]], distance: number, bearing: number): [number, number] {
+  return getRuler(c1[1]).destination(c1 as [number, number], distance, bearing);
 }
+function slowDestination(c1: [number, number, ...any[]], distance: number, bearing: number): [number, number] {
+  const res = turfDestination(c1, distance, bearing, {units: "kilometers"});
+  return res.geometry.coordinates as [number, number];
+}
+
 
 type CircleArray = [number, number, number];
 const earthRadius = 6371.0088; // Radius of the Earth in kilometers
 
-function calculateIntersection(circle1: CircleArray, circle2: CircleArray): [number, number][] | null {
+function calculateIntersection(circle1: CircleArray, circle2: CircleArray, useFastMath: boolean): [number, number][] | null {
     // Convert the coordinates to radians
     const lat1 = toRadians(circle1[1]);
     const lon1 = toRadians(circle1[0]);
@@ -38,7 +48,7 @@ function calculateIntersection(circle1: CircleArray, circle2: CircleArray): [num
     const lon2 = toRadians(circle2[0]);
 
     // Calculate the distance between the circle centers
-    const dist = distance(circle1, circle2);
+    const dist = (useFastMath ? fastDistance : slowDistance)(circle1, circle2);
 
     // Check if the circles intersect
     if (dist > circle1[2] + circle2[2] || dist < Math.abs(circle1[2] - circle2[2])) {
@@ -124,22 +134,36 @@ function toDegrees(radians: number): number {
 
 export function circleUnion<T extends {
     [key: string]: any
-}>(circles: CircleArray[], properties: T, logPerf = false): Feature[] {
+}>(circles: CircleArray[], properties: T, { logPerf = false, useFastMath = true }: {
+    logPerf?: boolean
+    useFastMath?: boolean
+} = {}): Feature[] {
+    const distance = useFastMath ? fastDistance : slowDistance;
+    const destination = useFastMath ? fastDestination : slowDestination;
+
     // This is a workaround to deal with the function sometimes
     // fails to merge segments when it receives longitudes > 180
     // so this function will convert all longitudes to be between
     // -180 and 180
     // At some point we should fix the underlying issue, however
     // there isn't any obvious reason why this is happening
-    circles = circles.map(c => {
-      const bounded = c[0] % 360;
-      return [
-        // bounded > 0 ? bounded - 360 : bounded,
-        bounded >= 180 ? bounded - 360 : (bounded < -180 ? bounded + 360 : bounded),
-        c[1],
-        c[2],
-      ]
-    });
+    circles = circles.reduce((array, circle) => {
+      if (Math.abs(circle[1]) > 85) {
+        console.error(`Received invalid latitude, ${circle[1]}, skipping`);
+        return array;
+      }
+      if (circle[2] <= 0) {
+        console.error(`Received invalid radius, ${circle[2]}, skipping`);
+        return array;
+      }
+      const boundedLng = circle[0] % 360;
+      array.push([
+        boundedLng >= 180 ? boundedLng - 360 : (boundedLng < -180 ? boundedLng + 360 : boundedLng),
+        circle[1],
+        circle[2],
+      ]);
+      return array;
+    }, [] as CircleArray[]);
 
     // const startClipping = performance.now();
     //
@@ -230,6 +254,7 @@ export function circleUnion<T extends {
                 const intersectionAngles = calculateIntersection(
                     circle,
                     otherCircle,
+                    useFastMath
                 );
 
                 if (intersectionAngles) {
@@ -339,7 +364,22 @@ export function circleUnion<T extends {
             }
 
             if (currentPolygon.length === 0) {
-                currentPolygon.push(...segments[0]);
+              const fixedSection = segments[0].slice();
+
+              // If > 180 degrees latitude away from group polygon start, adjust longitudes in the segment by 360
+              const firstPoint = groupPolygon[0]?.[0];
+              if (firstPoint) {
+                if (fixedSection[0][0] - firstPoint[0] > 180) {
+                  for (let i = 0; i < fixedSection.length; i++) {
+                    fixedSection[i] = [fixedSection[i][0] - 360, fixedSection[i][1]];
+                  }
+                } else if (fixedSection[0][0] - firstPoint[0] < -180) {
+                  for (let i = 0; i < fixedSection.length; i++) {
+                    fixedSection[i] = [fixedSection[i][0] + 360, fixedSection[i][1]];
+                  }
+                }
+              }
+                currentPolygon.push(...fixedSection);
                 segments.splice(0, 1);
                 continue;
             }
@@ -361,18 +401,19 @@ export function circleUnion<T extends {
                 } else {
                     const fixedSection = closestSegment.slice();
 
-                    // If > 180 degrees latitude away from current polygon, adjust longitudes in the segment by 360
-                    if (fixedSection[0][0] - currentPolygon[currentPolygon.length - 1][0] > 180) {
+                    // If > 180 degrees latitude away from group/current polygon start, adjust longitudes in the segment by 360
+                    const firstPoint = groupPolygon[0]?.[0] ?? currentPolygon[0];
+                    if (fixedSection[0][0] - firstPoint[0] > 180) {
                       for (let i = 0; i < fixedSection.length; i++) {
                         fixedSection[i] = [fixedSection[i][0] - 360, fixedSection[i][1]];
                       }
-                    } else if (currentPolygon[currentPolygon.length - 1][0] - fixedSection[0][0] > 180) {
+                    } else if (fixedSection[0][0] - firstPoint[0] < -180) {
                       for (let i = 0; i < fixedSection.length; i++) {
                         fixedSection[i] = [fixedSection[i][0] + 360, fixedSection[i][1]];
                       }
                     }
-                    currentPolygon.push(...fixedSection);
-                    segments.splice(segments.indexOf(closestSegment), 1);
+                  currentPolygon.push(...fixedSection);
+                  segments.splice(segments.indexOf(closestSegment), 1);
                 }
             } else {
                 if (currentPolygon.length > 2 && distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]) < maximumRadius * 0.5) {

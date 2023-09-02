@@ -1,7 +1,7 @@
 {
   "name": "circle-clipping",
   "packageManager": "yarn@3.6.1",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "license": "MIT",
   "repository": "https://github.com/sohcah/circle-clipping",
   "workspaces": [
@@ -31,6 +31,8 @@
   },
   "dependencies": {
     "@turf/area": "^6.5.0",
+    "@turf/destination": "^6.5.0",
+    "@turf/distance": "^6.5.0",
     "@turf/helpers": "^6.5.0",
     "cheap-ruler": "^3.0.2",
     "geokdbush-tk": "^2.0.3"

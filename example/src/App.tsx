@@ -2,7 +2,7 @@ import './App.css'
 import MapGL, {Layer, Source} from 'react-map-gl';
 import seedrandom from 'seed-random';
 import {circleUnion} from "../../src";
-import {circle} from "@turf/turf";
+// import {circle} from "@turf/turf";
 
 let data: [number, number, number][] = [];
 
@@ -40,7 +40,10 @@ function App() {
                     >
                         <Source type="geojson" data={{
                             type: "FeatureCollection",
-                            features: circleUnion(data, {}, true).map(i => ({
+                            features: circleUnion(data, {}, {
+                              logPerf: true,
+                              // useFastMath: false,
+                            }).map(i => ({
                                 ...i,
                                 properties: {
                                     color: `#${Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, "0")}`,
@@ -63,19 +66,19 @@ function App() {
                             {/*            "circle-radius": 5*/}
                             {/*       }}/>*/}
                         </Source>
-                      <Source type="geojson" data={{
-                        type: "FeatureCollection",
-                        features: data.map(i => circle([i[0], i[1]], i[2], {
-                          units: "kilometers"
-                        }))
-                      }}>
-                        <Layer type="fill"
-                               paint={{
-                                 "fill-color": "#f00",
-                                 "fill-opacity": 0.1
-                               }}
-                        />
-                      </Source>
+                      {/*<Source type="geojson" data={{*/}
+                      {/*  type: "FeatureCollection",*/}
+                      {/*  features: data.map(i => circle([i[0], i[1]], i[2], {*/}
+                      {/*    units: "kilometers"*/}
+                      {/*  }))*/}
+                      {/*}}>*/}
+                      {/*  <Layer type="fill"*/}
+                      {/*         paint={{*/}
+                      {/*           "fill-color": "#f00",*/}
+                      {/*           "fill-opacity": 0.1*/}
+                      {/*         }}*/}
+                      {/*  />*/}
+                      {/*</Source>*/}
                     </MapGL>
                 </div>
             </div>
