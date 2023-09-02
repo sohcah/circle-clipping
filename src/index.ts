@@ -1,10 +1,10 @@
 import {
-    Feature,
+    type Feature,
     polygon,
-    area,
-} from "@turf/turf";
+} from "@turf/helpers";
+import area from "@turf/area";
 import KDBush from "kdbush";
-import * as geokdbush from "geokdbush-tk";
+import { around } from "geokdbush-tk";
 import CheapRuler from "cheap-ruler";
 
 const rulers = new Array<CheapRuler>(1800);
@@ -51,12 +51,10 @@ function calculateIntersection(circle1: CircleArray, circle2: CircleArray): [num
         (2 * circle1[2] * dist)
     );
 
-    const angle1 = Math.atan2(
-        lon2 - lon1,
-        Math.log(
-            Math.tan(lat2 / 2 + Math.PI / 4) / Math.tan(lat1 / 2 + Math.PI / 4)
-        )
-    );
+  const angle1 = Math.atan2(
+    Math.sin(lon2 - lon1) * Math.cos(lat2),
+    Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1)
+  );
 
     const radiusAngle = circle1[2] / earthRadius;
     const cosRadiusAngle = Math.cos(radiusAngle);
@@ -108,7 +106,7 @@ function calculateIntersection(circle1: CircleArray, circle2: CircleArray): [num
         Math.sin(lat2) * p2latCosPart * Math.cos(p2lngrad - lon2);
     const bearingC2P2 = Math.atan2(bearingC2P2A, bearingC2P2B);
 
-    return [
+  return [
         [toDegrees(bearingC1P1), toDegrees(bearingC2P1)],
         [toDegrees(bearingC1P2), toDegrees(bearingC2P2)],
     ];
@@ -127,6 +125,22 @@ function toDegrees(radians: number): number {
 export function circleUnion<T extends {
     [key: string]: any
 }>(circles: CircleArray[], properties: T, logPerf = false): Feature[] {
+    // This is a workaround to deal with the function sometimes
+    // fails to merge segments when it receives longitudes > 180
+    // so this function will convert all longitudes to be between
+    // -180 and 180
+    // At some point we should fix the underlying issue, however
+    // there isn't any obvious reason why this is happening
+    circles = circles.map(c => {
+      const bounded = c[0] % 360;
+      return [
+        // bounded > 0 ? bounded - 360 : bounded,
+        bounded >= 180 ? bounded - 360 : (bounded < -180 ? bounded + 360 : bounded),
+        c[1],
+        c[2],
+      ]
+    });
+
     // const startClipping = performance.now();
     //
     // const circlePolys = circles.map(c => circle(c, c[2], {units: "kilometers"}));
@@ -206,7 +220,7 @@ export function circleUnion<T extends {
         unprocessedCircles.delete(i);
         const circle = circles[i];
         circleGroups[i] = currentGroup;
-        const potentialIntersections = geokdbush.around(kdbush, circle[0], circle[1], Infinity, maximumRadius + circle[2], c => c !== i && unprocessedCircles.has(c));
+        const potentialIntersections = around(kdbush, circle[0], circle[1], Infinity, maximumRadius + circle[2], c => c !== i && unprocessedCircles.has(c));
         for (const potentialIntersection of potentialIntersections) {
             const otherCircle = circles[potentialIntersection];
 
@@ -345,7 +359,19 @@ export function circleUnion<T extends {
                     groupPolygon.push([...currentPolygon, currentPolygon[0]]);
                     currentPolygon = [];
                 } else {
-                    currentPolygon.push(...closestSegment);
+                    const fixedSection = closestSegment.slice();
+
+                    // If > 180 degrees latitude away from current polygon, adjust longitudes in the segment by 360
+                    if (fixedSection[0][0] - currentPolygon[currentPolygon.length - 1][0] > 180) {
+                      for (let i = 0; i < fixedSection.length; i++) {
+                        fixedSection[i] = [fixedSection[i][0] - 360, fixedSection[i][1]];
+                      }
+                    } else if (currentPolygon[currentPolygon.length - 1][0] - fixedSection[0][0] > 180) {
+                      for (let i = 0; i < fixedSection.length; i++) {
+                        fixedSection[i] = [fixedSection[i][0] + 360, fixedSection[i][1]];
+                      }
+                    }
+                    currentPolygon.push(...fixedSection);
                     segments.splice(segments.indexOf(closestSegment), 1);
                 }
             } else {
@@ -353,7 +379,7 @@ export function circleUnion<T extends {
                     groupPolygon.push([...currentPolygon, currentPolygon[0]]);
                     currentPolygon = [];
                 } else if (currentPolygon.length) {
-                    console.error("Could not find a segment to connect to", currentPolygon, segments, distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]));
+                    console.error("Could not find a segment to connect to", {currentPolygon, segments, dist: distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1])});
                     throw new Error("Could not find a segment to connect to");
                 }
             }
@@ -363,7 +389,7 @@ export function circleUnion<T extends {
             groupPolygon.push([...currentPolygon, currentPolygon[0]]);
             currentPolygon = [];
         } else if (currentPolygon.length) {
-            console.error("Could not find a segment to connect to", circles, currentPolygon, segments, distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1]));
+            console.error("Could not find a segment to connect to", {circles, currentPolygon, segments, dist: distance(currentPolygon[0], currentPolygon[currentPolygon.length - 1])});
             throw new Error("Could not find a segment to connect to");
         }
 

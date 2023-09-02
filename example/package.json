@@ -7,26 +7,17 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview",
-    "build-lib": "parcel build --no-optimize src/circleUnionBuild.ts"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@turf/turf": "^6.5.0",
-    "@types/d3-delaunay": "^6.0.1",
-    "cheap-ruler": "^3.0.2",
-    "d3-delaunay": "^6.0.4",
-    "delaunator": "^5.0.0",
-    "geokdbush-tk": "^2.0.3",
-    "kdbush": "^4.0.2",
     "mapbox-gl": "^2.15.0",
-    "parcel": "^2.9.3",
-    "polygon-clipping": "^0.15.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-map-gl": "^7.1.2",
     "seed-random": "^2.2.0"
   },
   "devDependencies": {
-    "@types/delaunator": "^5.0.0",
     "@types/react": "^18.2.14",
     "@types/react-dom": "^18.2.6",
     "@types/seed-random": "^2.2.1",
@@ -36,8 +27,6 @@
     "eslint": "^8.44.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.1",
-    "maplibre-gl": "^3.2.0",
-    "react-map-gl": "^7.1.2",
     "typescript": "^5.0.2",
     "vite": "^4.4.0"
   }
