@@ -41,12 +41,6 @@ type CircleArray = [number, number, number];
 const earthRadius = 6371.0088; // Radius of the Earth in kilometers
 
 function calculateIntersection(circle1: CircleArray, circle2: CircleArray, useFastMath: boolean): [number, number][] | null {
-    // Convert the coordinates to radians
-    const lat1 = toRadians(circle1[1]);
-    const lon1 = toRadians(circle1[0]);
-    const lat2 = toRadians(circle2[1]);
-    const lon2 = toRadians(circle2[0]);
-
     // Calculate the distance between the circle centers
     const dist = (useFastMath ? fastDistance : slowDistance)(circle1, circle2);
 
@@ -60,6 +54,13 @@ function calculateIntersection(circle1: CircleArray, circle2: CircleArray, useFa
         (circle1[2] * circle1[2] + dist * dist - circle2[2] * circle2[2]) /
         (2 * circle1[2] * dist)
     );
+
+  // Convert the coordinates to radians
+  const lat1 = toRadians(circle1[1]);
+  const lon1 = toRadians(circle1[0]);
+  const lat2 = toRadians(circle2[1]);
+  const lon2 = toRadians(circle2[0]);
+
 
   const angle1 = Math.atan2(
     Math.sin(lon2 - lon1) * Math.cos(lat2),
@@ -194,21 +195,13 @@ export function circleUnion<T extends {
             circlesSet.add(key);
             return true;
         }
-    });
+    }).sort((a, b) => b[2] - a[2]);
 
     const features: Feature[] = [];
 
     // Benchmark the performance of calculating the intersection point
     const start = performance.now();
     let segmentStart = performance.now();
-
-    const kdbush = new KDBush(circles.length);
-
-    for (const circle of circles) {
-        kdbush.add(circle[0], circle[1]);
-    }
-
-    kdbush.finish();
 
     const intersectingCircles: number[][] = new Array(circles.length).fill(null!).map(() => []);
     const intersectionAnglesByCircle: number[][] = new Array(circles.length).fill(null!).map(() => [])
@@ -221,6 +214,26 @@ export function circleUnion<T extends {
     for (let i = 0; i < circles.length; i++) {
         unprocessedCircles.add(i);
     }
+
+    let kdbush: KDBush = null!;
+
+    let kdbushIndex: number[] = null!;
+    function generateKDBush() {
+      kdbush = new KDBush(unprocessedCircles.size)
+      kdbushIndex = new Array(unprocessedCircles.size).fill(0);
+
+      let n = 0;
+      for (const i of unprocessedCircles) {
+        const circle = circles[i];
+        kdbush.add(circle[0], circle[1]);
+        kdbushIndex[n] = i;
+        n++;
+      }
+
+      kdbush.finish();
+    }
+
+    generateKDBush();
 
     const queue = new Set([0]);
 
@@ -244,12 +257,13 @@ export function circleUnion<T extends {
         unprocessedCircles.delete(i);
         const circle = circles[i];
         circleGroups[i] = currentGroup;
-        const potentialIntersections = around(kdbush, circle[0], circle[1], Infinity, maximumRadius + circle[2], c => c !== i && unprocessedCircles.has(c));
-        for (const potentialIntersection of potentialIntersections) {
+        const potentialIntersections = around(kdbush, circle[0], circle[1], Infinity, maximumRadius + circle[2], c => kdbushIndex[c] !== i && unprocessedCircles.has(kdbushIndex[c]));
+        let overlaps = 0;
+        for (const potentialIntersectionKdbush of potentialIntersections) {
+            const potentialIntersection = kdbushIndex[potentialIntersectionKdbush];
             const otherCircle = circles[potentialIntersection];
 
             if (circle[2] + otherCircle[2] > distance(circle, otherCircle)) {
-                queue.add(potentialIntersection);
 
                 const intersectionAngles = calculateIntersection(
                     circle,
@@ -258,14 +272,24 @@ export function circleUnion<T extends {
                 );
 
                 if (intersectionAngles) {
+                    queue.add(potentialIntersection);
                     for (const [a1, a2] of intersectionAngles) {
                         intersectionAnglesByCircle[i].push(a1);
                         intersectionAnglesByCircle[potentialIntersection].push(a2);
                     }
+                } else if (otherCircle[2] < circle[2]) {
+                  // Other Circle is entire contained within Circle, so we can skip it
+                  unprocessedCircles.delete(potentialIntersection);
+                  overlaps++;
                 }
                 intersectingCircles[i].push(potentialIntersection);
                 intersectingCircles[potentialIntersection].push(i);
             }
+        }
+        if (overlaps > 50) {
+          // If we've skipped lots of circles, we should regenerate the KDBush index.
+          if (logPerf) console.log(`Regenerating KDBush with ${unprocessedCircles.size} circles (${overlaps} overlaps)`);
+          generateKDBush();
         }
     }
 
